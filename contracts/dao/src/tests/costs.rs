@@ -181,7 +181,7 @@ fn entrypoint_resource_costs() {
         &Bytes::from_array(&b.env, &[0xab; 32]),
     );
     push(row(&b.env, "`attach_document`"));
-    b.client.edit_loan_proposal(&m(0), &pid, &900);
+    b.client.edit_loan_proposal(&m(0), &pid, &900, &None);
     push(row(&b.env, "`edit_loan_proposal`"));
     advance(&b.env, EDITING + 1);
     let (first, deciding) = vote_until_decided(&b, pid, &m(0), true, "`vote_on_loan_proposal`");

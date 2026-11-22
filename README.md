@@ -145,7 +145,7 @@ All entrypoints are on the `OurDao` contract (`lib.rs`). Errors are the numeric 
 |---|---|
 | `request_loan(borrower, amount) -> proposal_id` | Opens a loan proposal (3-day editing window). |
 | `request_loan_in_asset(borrower, amount, asset, metadata_cid) -> proposal_id` | Same as `request_loan`, denominated in a whitelisted `asset` and sized/priced against the treasury held in it. |
-| `edit_loan_proposal(borrower, proposal_id, new_amount)` | Only during the editing window, only the borrower. |
+| `edit_loan_proposal(borrower, proposal_id, new_amount, metadata_cid)` | Only during the editing window, only the borrower. Pass `None` to clear the metadata CID. |
 | `cancel_loan_proposal(borrower, proposal_id)` | Only during the editing window, only the borrower. |
 | `vote_on_loan_proposal(voter, proposal_id, support)` | Auto-approves and disburses at the consensus threshold. |
 | `vote_batch(voter, votes)` | Casts votes across up to 10 loan proposals in one call. Larger batches return `TooManyVotesInBatch` (92). |

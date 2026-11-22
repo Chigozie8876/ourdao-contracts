@@ -768,7 +768,7 @@ fn edit_loan_proposal_emits_loan_edit_event() {
     let _ = s.env.events().all();
     advance(&s.env, 10);
     let edit_ts = s.env.ledger().timestamp();
-    s.client.edit_loan_proposal(&borrower, &pid, &600);
+    s.client.edit_loan_proposal(&borrower, &pid, &600, &None);
     // Capture events before any further contract call (all() drains).
     let events = s.env.events().all();
     let mut found = false;
@@ -790,6 +790,22 @@ fn edit_loan_proposal_emits_loan_edit_event() {
     assert_eq!(after.last_edited_at, Some(edit_ts));
     let expected = s.client.calculate_loan_terms(&600);
     assert_eq!(after.total_repayment, expected.total_repayment);
+}
+
+#[test]
+fn edit_loan_proposal_updates_and_clears_metadata_cid() {
+    let s = setup(2);
+    let borrower = s.members.get(0).unwrap();
+    let initial = String::from_str(&s.env, "cid-before");
+    let replacement = String::from_str(&s.env, "cid-after");
+    let pid = s.client.request_loan(&borrower, &500, &Some(initial));
+
+    s.client
+        .edit_loan_proposal(&borrower, &pid, &600, &Some(replacement.clone()));
+    assert_eq!(s.client.get_loan_proposal(&pid).unwrap().metadata_cid, Some(replacement));
+
+    s.client.edit_loan_proposal(&borrower, &pid, &700, &None);
+    assert_eq!(s.client.get_loan_proposal(&pid).unwrap().metadata_cid, None);
 }
 
 // ===========================================================================
@@ -1052,7 +1068,7 @@ fn loan_in_removed_asset_can_still_be_repaid() {
         .client
         .request_loan_in_asset(&borrower, &1_000, &asset.address, &None);
     // Editing re-quotes against the same asset's treasury.
-    s.client.edit_loan_proposal(&borrower, &pid, &2_000);
+    s.client.edit_loan_proposal(&borrower, &pid, &2_000, &None);
     advance(&s.env, EDITING + 1);
     s.client.vote_on_loan_proposal(&v1, &pid, &true);
     s.client.vote_on_loan_proposal(&v2, &pid, &true);
@@ -1453,7 +1469,7 @@ fn loan_lifecycle_in_second_asset() {
     // 2. Edit: re-quoted against asset B, not the much smaller base treasury
     // (which would price 3_000 at the 20% cap).
     // ratio 3_000 bps → rate 500 + 450 = 950 → interest 285.
-    s.client.edit_loan_proposal(&borrower, &pid, &3_000);
+    s.client.edit_loan_proposal(&borrower, &pid, &3_000, &None);
     let edited = s.client.get_loan_proposal(&pid).unwrap();
     assert_eq!(edited.amount, 3_000);
     assert_eq!(edited.interest_rate, 950);

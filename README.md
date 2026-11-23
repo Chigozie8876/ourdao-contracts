@@ -7,7 +7,7 @@
 [![CI](https://github.com/ourdao/ourdao-contracts/actions/workflows/ci.yml/badge.svg)](https://github.com/ourdao/ourdao-contracts/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-A member-owned lending DAO implemented as a single [Soroban](https://developers.stellar.org/docs/build/smart-contracts) smart contract in Rust — 2,300+ lines across 13 focused modules, 31 unit tests, CI-gated on every push.
+A member-owned lending DAO implemented as a single [Soroban](https://developers.stellar.org/docs/build/smart-contracts) smart contract in Rust — about 4,800 lines across 14 focused modules, 210+ tests (unit, property and stateful), CI-gated on every push.
 
 The execution model, storage layout, authorization, and value transfer are all Soroban-native. All DAO value flows through a single configurable token set at initialization (USDC, XLM via the Stellar Asset Contract, or any Stellar asset).
 
@@ -112,6 +112,7 @@ contracts/dao/
     storage.rs     # typed storage keys + TTL management
     types.rs       # data model + constants
     error.rs       # contract error codes
+    migration.rs   # admin-only state seeding for migrations, then lock_seeding
     util.rs        # token client, auth guards, vote math
     tests/         # test suite, one module per contract module (`cargo test`)
   scripts/

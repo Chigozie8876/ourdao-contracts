@@ -241,7 +241,7 @@ fn error_not_in_editing_phase() {
     let proposal_id = s.client.request_loan(&borrower, &100i128, &None);
 
     advance(&s.env, EDITING + 1);
-    let result = s.client.try_edit_loan_proposal(&borrower, &proposal_id, &String::from_str(&s.env, "new_cid"));
+    let result = s.client.try_edit_loan_proposal(&borrower, &proposal_id, &500, &Some(String::from_str(&s.env, "new_cid")));
     assert_eq!(result, Err(Ok(Error::NotInEditingPhase)));
 }
 
@@ -550,7 +550,7 @@ fn error_not_proposal_owner() {
 
     let proposal_id = s.client.request_loan(&borrower, &100i128, &None);
 
-    let result = s.client.try_edit_loan_proposal(&other, &proposal_id, &String::from_str(&s.env, "new_cid"));
+    let result = s.client.try_edit_loan_proposal(&other, &proposal_id, &500, &Some(String::from_str(&s.env, "new_cid")));
     assert_eq!(result, Err(Ok(Error::NotProposalOwner)));
 }
 

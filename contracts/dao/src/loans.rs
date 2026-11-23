@@ -215,6 +215,7 @@ pub fn edit_loan_proposal(
     borrower: Address,
     proposal_id: u32,
     new_amount: i128,
+    metadata_cid: Option<String>,
 ) -> Result<(), Error> {
     util::require_initialized(env)?;
     util::require_not_paused(env)?;
@@ -231,6 +232,14 @@ pub fn edit_loan_proposal(
     if new_amount <= 0 {
         return Err(Error::InvalidAmount);
     }
+    if let Some(ref cid) = metadata_cid {
+        if cid.is_empty() {
+            return Err(Error::InvalidMetadataCid);
+        }
+        if cid.len() > 64 {
+            return Err(Error::DocumentTooLarge);
+        }
+    }
 
     let prev_amount = proposal.amount;
     let prev_total_repayment = proposal.total_repayment;
@@ -244,6 +253,7 @@ pub fn edit_loan_proposal(
     proposal.interest_rate = terms.interest_rate;
     proposal.duration = terms.duration;
     proposal.total_repayment = terms.total_repayment;
+    proposal.metadata_cid = metadata_cid;
     proposal.last_edited_at = Some(now);
     storage::set_loan_proposal(env, &proposal);
 

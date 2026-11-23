@@ -26,7 +26,7 @@ contract; use the contract entrypoint so the member record is created.
    `get_treasury_balance()` before requesting.
 2. Call `request_loan(borrower, amount)`. Save the returned `proposal_id`.
 3. During the editing phase, the borrower may call
-   `edit_loan_proposal(borrower, proposal_id, new_amount)`.
+   `edit_loan_proposal(borrower, proposal_id, new_amount, metadata_cid)`; pass `None` to clear the metadata CID.
 4. During voting, eligible members call
    `vote_on_loan_proposal(voter, proposal_id, support)` once each.
 5. When the consensus threshold is reached, approval and disbursement happen

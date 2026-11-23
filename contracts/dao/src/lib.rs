@@ -175,8 +175,9 @@ impl OurDao {
         borrower: Address,
         proposal_id: u32,
         new_amount: i128,
+        metadata_cid: Option<String>,
     ) -> Result<(), Error> {
-        loans::edit_loan_proposal(&env, borrower, proposal_id, new_amount)
+        loans::edit_loan_proposal(&env, borrower, proposal_id, new_amount, metadata_cid)
     }
 
     /// Withdraws a loan proposal while it is still in its editing period.

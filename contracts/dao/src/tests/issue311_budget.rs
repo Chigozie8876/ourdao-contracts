@@ -42,9 +42,13 @@ fn heavy_treasury_entrypoint_budget_regression() {
 
     // Issue many treasury withdrawals in sequence
     for i in 0..10 {
-        let pid = s
-            .client
-            .propose_treasury_withdrawal(&proposer, &100 * (i as i128 + 1), &dest, &String::from_str(&s.env, &format!("withdrawal {}", i)), &false);
+        let pid = s.client.propose_treasury_withdrawal(
+            &proposer,
+            &100 * (i as i128 + 1),
+            &dest,
+            &String::from_str(&s.env, &format!("withdrawal {}", i)),
+            &false,
+        );
         advance(&s.env, 1);
 
         // Vote to approve

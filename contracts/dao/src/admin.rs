@@ -343,4 +343,3 @@ pub fn remove_token(env: &Env, caller: Address, token: Address) -> Result<(), Er
         .publish((symbol_short!("tok_rem"),), (caller, token));
     Ok(())
 }
-

@@ -298,7 +298,6 @@ fn unstaking_during_unrevealed_private_commitment_is_rejected() {
     );
 }
 
-
 // Issue #280: staking always transfers the configured base token.
 #[test]
 fn staking_ignores_whitelisted_non_base_assets() {

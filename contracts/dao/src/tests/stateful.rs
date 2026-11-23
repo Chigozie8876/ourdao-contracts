@@ -39,10 +39,7 @@ fn action() -> impl Strategy<Value = Action> {
     ])
 }
 
-fn check_invariants(
-    env: &soroban_sdk::Env,
-    client: &OurDaoClient<'_>,
-) {
+fn check_invariants(env: &soroban_sdk::Env, client: &OurDaoClient<'_>) {
     let contract_id = client.address.clone();
 
     let (total_members, active_members, active_contributions) =
@@ -55,8 +52,7 @@ fn check_invariants(
                 if let Some(member) = crate::storage::get_member(env, &address) {
                     if member.status == MemberStatus::ActiveMember {
                         active += 1;
-                        contributions =
-                            contributions.saturating_add(member.contribution);
+                        contributions = contributions.saturating_add(member.contribution);
                     }
                 }
             }
@@ -68,22 +64,26 @@ fn check_invariants(
             )
         });
 
-    assert_eq!(active_members, env.as_contract(&contract_id, || {
-        let mut counted = 0u32;
-        for address in crate::storage::get_members(env).iter() {
-            if matches!(
-                crate::storage::get_member(env, &address),
-                Some(member) if member.status == MemberStatus::ActiveMember
-            ) {
-                counted += 1;
+    assert_eq!(
+        active_members,
+        env.as_contract(&contract_id, || {
+            let mut counted = 0u32;
+            for address in crate::storage::get_members(env).iter() {
+                if matches!(
+                    crate::storage::get_member(env, &address),
+                    Some(member) if member.status == MemberStatus::ActiveMember
+                ) {
+                    counted += 1;
+                }
             }
-        }
-        counted
-    }));
+            counted
+        })
+    );
 
-    assert_eq!(total_members, env.as_contract(&contract_id, || {
-        crate::storage::get_members(env).len()
-    }));
+    assert_eq!(
+        total_members,
+        env.as_contract(&contract_id, || { crate::storage::get_members(env).len() })
+    );
 
     let sum_contributions = env.as_contract(&contract_id, || {
         let mut sum = 0i128;
@@ -100,9 +100,7 @@ fn check_invariants(
 
     let mut sum_stake = 0i128;
     for address in client.list_members(&0, &1_000).iter() {
-        sum_stake = sum_stake.saturating_add(
-            client.get_stake(&address.address),
-        );
+        sum_stake = sum_stake.saturating_add(client.get_stake(&address.address));
     }
     assert_eq!(sum_stake, client.get_dao_summary().total_staked);
 }

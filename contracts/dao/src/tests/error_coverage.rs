@@ -1,6 +1,5 @@
 /// Comprehensive error variant coverage tests
 /// Each test ensures its corresponding Error variant is reachable
-
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::{Address, String, Vec};
 
@@ -22,7 +21,9 @@ fn error_already_initialized() {
     let mut admins = Vec::new(&s.env);
     admins.push_back(admin);
 
-    let result = s.client.try_initialize(&admins, &5_100u32, &FEE, &token, &policy());
+    let result = s
+        .client
+        .try_initialize(&admins, &5_100u32, &FEE, &token, &policy());
     assert_eq!(result, Err(Ok(Error::AlreadyInitialized)));
 }
 
@@ -215,7 +216,9 @@ fn error_has_active_loan() {
 #[test]
 fn error_proposal_not_found() {
     let s = setup(1);
-    let result = s.client.try_vote_on_loan_proposal(&s.members[0], &9999u32, &true);
+    let result = s
+        .client
+        .try_vote_on_loan_proposal(&s.members[0], &9999u32, &true);
     assert_eq!(result, Err(Ok(Error::ProposalNotFound)));
 }
 
@@ -228,7 +231,9 @@ fn error_not_borrower() {
 
     let proposal_id = s.client.request_loan(&borrower, &100i128, &None);
 
-    let result = s.client.try_cancel_loan_proposal(&non_borrower, &proposal_id);
+    let result = s
+        .client
+        .try_cancel_loan_proposal(&non_borrower, &proposal_id);
     assert_eq!(result, Err(Ok(Error::NotBorrower)));
 }
 
@@ -241,7 +246,12 @@ fn error_not_in_editing_phase() {
     let proposal_id = s.client.request_loan(&borrower, &100i128, &None);
 
     advance(&s.env, EDITING + 1);
-    let result = s.client.try_edit_loan_proposal(&borrower, &proposal_id, &500, &Some(String::from_str(&s.env, "new_cid")));
+    let result = s.client.try_edit_loan_proposal(
+        &borrower,
+        &proposal_id,
+        &500,
+        &Some(String::from_str(&s.env, "new_cid")),
+    );
     assert_eq!(result, Err(Ok(Error::NotInEditingPhase)));
 }
 
@@ -255,7 +265,9 @@ fn error_not_in_voting_phase() {
 
     advance(&s.env, VOTING_PERIOD + EDITING + 1);
 
-    let result = s.client.try_vote_on_loan_proposal(&borrower, &proposal_id, &true);
+    let result = s
+        .client
+        .try_vote_on_loan_proposal(&borrower, &proposal_id, &true);
     assert_eq!(result, Err(Ok(Error::NotInVotingPhase)));
 }
 
@@ -270,7 +282,9 @@ fn error_voting_ended() {
 
     advance(&s.env, VOTING_PERIOD + EDITING + 1);
 
-    let result = s.client.try_vote_on_loan_proposal(&voter, &proposal_id, &true);
+    let result = s
+        .client
+        .try_vote_on_loan_proposal(&voter, &proposal_id, &true);
     assert_eq!(result, Err(Ok(Error::VotingEnded)));
 }
 
@@ -286,7 +300,9 @@ fn error_already_voted() {
     advance(&s.env, EDITING + 1);
     s.client.vote_on_loan_proposal(&voter, &proposal_id, &true);
 
-    let result = s.client.try_vote_on_loan_proposal(&voter, &proposal_id, &false);
+    let result = s
+        .client
+        .try_vote_on_loan_proposal(&voter, &proposal_id, &false);
     assert_eq!(result, Err(Ok(Error::AlreadyVoted)));
 }
 
@@ -375,7 +391,9 @@ fn error_exceeds_treasury_ratio() {
     let s = setup(1);
     let borrower = s.members[0].clone();
 
-    let result = s.client.try_request_loan(&borrower, &1_000_000_000i128, &None);
+    let result = s
+        .client
+        .try_request_loan(&borrower, &1_000_000_000i128, &None);
     assert_eq!(result, Err(Ok(Error::ExceedsTreasuryRatio)));
 }
 
@@ -419,7 +437,9 @@ fn error_loan_not_overdue() {
 fn error_treasury_proposal_not_found() {
     let s = setup(1);
     let newcomer = Address::generate(&s.env);
-    let result = s.client.try_vote_on_treasury_proposal(&s.members[0], &9999u32, &true);
+    let result = s
+        .client
+        .try_vote_on_treasury_proposal(&s.members[0], &9999u32, &true);
     assert_eq!(result, Err(Ok(Error::TreasuryProposalNotFound)));
 }
 
@@ -429,9 +449,12 @@ fn error_name_taken() {
     let s = setup(1);
     let member = s.members[0].clone();
 
-    s.client.register_name(&member, &String::from_str(&s.env, "test_name"));
+    s.client
+        .register_name(&member, &String::from_str(&s.env, "test_name"));
 
-    let result = s.client.try_register_name(&member, &String::from_str(&s.env, "test_name"));
+    let result = s
+        .client
+        .try_register_name(&member, &String::from_str(&s.env, "test_name"));
     assert_eq!(result, Err(Ok(Error::NameTaken)));
 }
 
@@ -439,7 +462,9 @@ fn error_name_taken() {
 #[test]
 fn error_name_not_found() {
     let s = setup(1);
-    let result = s.client.try_resolve_name(&String::from_str(&s.env, "nonexistent"));
+    let result = s
+        .client
+        .try_resolve_name(&String::from_str(&s.env, "nonexistent"));
     assert_eq!(result, Err(Ok(Error::NameNotFound)));
 }
 
@@ -469,7 +494,9 @@ fn error_insufficient_stake() {
 #[test]
 fn error_no_commitment() {
     let s = setup(1);
-    let result = s.client.try_reveal_commitment(&s.members[0], &String::from_str(&s.env, "secret"));
+    let result = s
+        .client
+        .try_reveal_commitment(&s.members[0], &String::from_str(&s.env, "secret"));
     assert_eq!(result, Err(Ok(Error::NoCommitment)));
 }
 
@@ -479,10 +506,13 @@ fn error_commitment_mismatch() {
     let s = setup(1);
     let member = s.members[0].clone();
 
-    let hash = soroban_sdk::crypto::Sha256::hash(&s.env, &String::from_str(&s.env, "secret").into());
+    let hash =
+        soroban_sdk::crypto::Sha256::hash(&s.env, &String::from_str(&s.env, "secret").into());
     s.client.commit_to_vote(&member, &hash);
 
-    let result = s.client.try_reveal_commitment(&member, &String::from_str(&s.env, "wrong_secret"));
+    let result = s
+        .client
+        .try_reveal_commitment(&member, &String::from_str(&s.env, "wrong_secret"));
     assert_eq!(result, Err(Ok(Error::CommitmentMismatch)));
 }
 
@@ -492,11 +522,15 @@ fn error_already_revealed() {
     let s = setup(1);
     let member = s.members[0].clone();
 
-    let hash = soroban_sdk::crypto::Sha256::hash(&s.env, &String::from_str(&s.env, "secret").into());
+    let hash =
+        soroban_sdk::crypto::Sha256::hash(&s.env, &String::from_str(&s.env, "secret").into());
     s.client.commit_to_vote(&member, &hash);
-    s.client.reveal_commitment(&member, &String::from_str(&s.env, "secret"));
+    s.client
+        .reveal_commitment(&member, &String::from_str(&s.env, "secret"));
 
-    let result = s.client.try_reveal_commitment(&member, &String::from_str(&s.env, "secret"));
+    let result = s
+        .client
+        .try_reveal_commitment(&member, &String::from_str(&s.env, "secret"));
     assert_eq!(result, Err(Ok(Error::AlreadyRevealed)));
 }
 
@@ -524,7 +558,9 @@ fn error_proposal_not_expired() {
 #[test]
 fn error_invalid_name() {
     let s = setup(1);
-    let result = s.client.try_register_name(&s.members[0], &String::from_str(&s.env, ""));
+    let result = s
+        .client
+        .try_register_name(&s.members[0], &String::from_str(&s.env, ""));
     assert_eq!(result, Err(Ok(Error::InvalidName)));
 }
 
@@ -534,7 +570,8 @@ fn error_not_yet_revealed() {
     let s = setup(1);
     let member = s.members[0].clone();
 
-    let hash = soroban_sdk::crypto::Sha256::hash(&s.env, &String::from_str(&s.env, "secret").into());
+    let hash =
+        soroban_sdk::crypto::Sha256::hash(&s.env, &String::from_str(&s.env, "secret").into());
     s.client.commit_to_vote(&member, &hash);
 
     let result = s.client.try_claim_stake_reward(&member);
@@ -550,7 +587,12 @@ fn error_not_proposal_owner() {
 
     let proposal_id = s.client.request_loan(&borrower, &100i128, &None);
 
-    let result = s.client.try_edit_loan_proposal(&other, &proposal_id, &500, &Some(String::from_str(&s.env, "new_cid")));
+    let result = s.client.try_edit_loan_proposal(
+        &other,
+        &proposal_id,
+        &500,
+        &Some(String::from_str(&s.env, "new_cid")),
+    );
     assert_eq!(result, Err(Ok(Error::NotProposalOwner)));
 }
 
@@ -562,7 +604,9 @@ fn error_document_too_large() {
 
     let large_doc = String::from_str(&s.env, &"x".repeat(100_000));
 
-    let result = s.client.try_request_loan(&member, &100i128, &Some(large_doc));
+    let result = s
+        .client
+        .try_request_loan(&member, &100i128, &Some(large_doc));
     assert_eq!(result, Err(Ok(Error::DocumentTooLarge)));
 }
 
@@ -610,7 +654,11 @@ fn error_no_pending_policy() {
 #[test]
 fn error_invalid_metadata_cid() {
     let s = setup(1);
-    let result = s.client.try_request_loan(&s.members[0], &100i128, &Some(String::from_str(&s.env, "invalid")));
+    let result = s.client.try_request_loan(
+        &s.members[0],
+        &100i128,
+        &Some(String::from_str(&s.env, "invalid")),
+    );
     assert_eq!(result, Err(Ok(Error::InvalidMetadataCid)));
 }
 
@@ -628,7 +676,11 @@ fn error_invalid_delegation() {
 #[test]
 fn error_invalid_proposal() {
     let s = setup(1);
-    let result = s.client.try_request_loan(&s.members[0], &100i128, &Some(String::from_str(&s.env, "ipfs://test")));
+    let result = s.client.try_request_loan(
+        &s.members[0],
+        &100i128,
+        &Some(String::from_str(&s.env, "ipfs://test")),
+    );
     assert_eq!(result, Err(Ok(Error::InvalidProposal)));
 }
 
@@ -659,7 +711,9 @@ fn error_token_not_whitelisted() {
     let member = s.members[0].clone();
     let unwhitelisted_token = Address::generate(&s.env);
 
-    let result = s.client.try_repay_loan_in_asset(&member, &0u32, &unwhitelisted_token);
+    let result = s
+        .client
+        .try_repay_loan_in_asset(&member, &0u32, &unwhitelisted_token);
     assert_eq!(result, Err(Ok(Error::TokenNotWhitelisted)));
 }
 
@@ -699,7 +753,9 @@ fn error_asset_mismatch() {
 
     let wrong_token = Address::generate(&s.env);
 
-    let result = s.client.try_repay_loan_in_asset(&borrower, &proposal_id, &wrong_token);
+    let result = s
+        .client
+        .try_repay_loan_in_asset(&borrower, &proposal_id, &wrong_token);
     assert_eq!(result, Err(Ok(Error::AssetMismatch)));
 }
 
@@ -752,10 +808,16 @@ fn error_too_many_open_proposals() {
 
     for i in 0..10 {
         let cid = format!("QmVeryLongMetadataHashForTest{:02}", i);
-        let _ = s.client.request_loan(&borrower, &100i128, &Some(String::from_str(&s.env, &cid)));
+        let _ = s
+            .client
+            .request_loan(&borrower, &100i128, &Some(String::from_str(&s.env, &cid)));
     }
 
-    let result = s.client.try_request_loan(&borrower, &100i128, &Some(String::from_str(&s.env, "QmOverflow")));
+    let result = s.client.try_request_loan(
+        &borrower,
+        &100i128,
+        &Some(String::from_str(&s.env, "QmOverflow")),
+    );
     assert_eq!(result, Err(Ok(Error::TooManyOpenProposals)));
 }
 
@@ -769,6 +831,8 @@ fn error_borrower_cannot_vote() {
 
     advance(&s.env, EDITING + 1);
 
-    let result = s.client.try_vote_on_loan_proposal(&borrower, &proposal_id, &true);
+    let result = s
+        .client
+        .try_vote_on_loan_proposal(&borrower, &proposal_id, &true);
     assert_eq!(result, Err(Ok(Error::BorrowerCannotVote)));
 }

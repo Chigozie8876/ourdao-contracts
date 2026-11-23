@@ -123,8 +123,7 @@ fn second_asset_interest_claim_and_exit_stay_in_that_asset() {
         per_member
     );
     assert_eq!(
-        s.client
-            .claim_rewards_in_asset(&claimant, &asset.address),
+        s.client.claim_rewards_in_asset(&claimant, &asset.address),
         per_member
     );
     assert_eq!(asset.balance(&claimant), per_member);
@@ -161,13 +160,17 @@ fn legacy_base_yield_values_remain_claimable_after_storage_migration() {
             &crate::storage::DataKey::MemberYieldSnapshot(member.clone()),
             &40i128,
         );
-        s.env.storage().persistent().set(
-            &crate::storage::DataKey::YieldRemainder,
-            &7i128,
-        );
-        s.env.storage().persistent().remove(
-            &crate::storage::YieldKey::MemberYieldSnapshot(member.clone(), base_asset.clone()),
-        );
+        s.env
+            .storage()
+            .persistent()
+            .set(&crate::storage::DataKey::YieldRemainder, &7i128);
+        s.env
+            .storage()
+            .persistent()
+            .remove(&crate::storage::YieldKey::MemberYieldSnapshot(
+                member.clone(),
+                base_asset.clone(),
+            ));
     });
 
     assert_eq!(s.client.get_pending_yield(&member), 60);
@@ -494,15 +497,13 @@ fn calculate_exit_share_for_unregistered_address() {
     assert_eq!(s.client.calculate_exit_share(&unknown), 0);
 }
 
-
 // Issue #280: membership contribution always uses the configured base token.
 #[test]
 fn membership_fee_ignores_whitelisted_non_base_assets() {
     let s = setup(1);
     let second = whitelist_second_asset(&s, 0);
     let member = Address::generate(&s.env);
-    soroban_sdk::token::StellarAssetClient::new(&s.env, &s.token.address)
-        .mint(&member, &MINT);
+    soroban_sdk::token::StellarAssetClient::new(&s.env, &s.token.address).mint(&member, &MINT);
     mint_asset(&s, &second.address, &member, MINT);
 
     let base_before = s.token.balance(&member);

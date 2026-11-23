@@ -175,11 +175,7 @@ pub fn claim_rewards(env: &Env, member: Address) -> Result<i128, Error> {
 }
 
 #[allow(deprecated)]
-pub fn claim_rewards_in_asset(
-    env: &Env,
-    member: Address,
-    asset: Address,
-) -> Result<i128, Error> {
+pub fn claim_rewards_in_asset(env: &Env, member: Address, asset: Address) -> Result<i128, Error> {
     claim_rewards_in_asset_internal(env, member, asset)
 }
 
@@ -240,7 +236,6 @@ pub fn calculate_exit_share(env: &Env, member: &Address) -> i128 {
     share_from_contributions(treasury, record.contribution, total_contributions)
 }
 
-
 /// Single definition of a member's unclaimed yield. Used by `exit_dao`,
 /// `claim_rewards` and the public `get_pending_yield` view so the amount
 /// displayed is always the amount paid.
@@ -254,11 +249,7 @@ pub(crate) fn compute_pending_yield(env: &Env, addr: &Address) -> i128 {
     compute_pending_yield_in_asset(env, addr, &asset)
 }
 
-pub(crate) fn compute_pending_yield_in_asset(
-    env: &Env,
-    addr: &Address,
-    asset: &Address,
-) -> i128 {
+pub(crate) fn compute_pending_yield_in_asset(env: &Env, addr: &Address, asset: &Address) -> i128 {
     if !storage::is_initialized(env) {
         return 0;
     }

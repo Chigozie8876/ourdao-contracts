@@ -47,15 +47,13 @@ fn pause_blocks_all_mutating_entrypoints_except_repay() {
     let loan_id = s.client.request_loan(&borrower, &500, &None);
     advance(&s.env, EDITING + 1);
 
-    let treasury_id = s
-        .client
-        .propose_treasury_withdrawal(
-            &borrower,
-            &100,
-            &newcomer,
-            &String::from_str(&s.env, "test"),
-            &false,
-        );
+    let treasury_id = s.client.propose_treasury_withdrawal(
+        &borrower,
+        &100,
+        &newcomer,
+        &String::from_str(&s.env, "test"),
+        &false,
+    );
 
     s.client.pause(&s.admin);
 
@@ -90,16 +88,14 @@ fn pause_blocks_all_mutating_entrypoints_except_repay() {
         EntryPoint {
             name: "set_pauser",
             blocked: matches!(
-                s.client.try_set_pauser(&s.admin, &Address::generate(&s.env)),
+                s.client
+                    .try_set_pauser(&s.admin, &Address::generate(&s.env)),
                 Err(Ok(Error::Paused))
             ),
         },
         EntryPoint {
             name: "revoke_pauser",
-            blocked: matches!(
-                s.client.try_revoke_pauser(&s.admin),
-                Err(Ok(Error::Paused))
-            ),
+            blocked: matches!(s.client.try_revoke_pauser(&s.admin), Err(Ok(Error::Paused))),
         },
         EntryPoint {
             name: "set_consensus_threshold",
@@ -138,17 +134,11 @@ fn pause_blocks_all_mutating_entrypoints_except_repay() {
         },
         EntryPoint {
             name: "pause",
-            blocked: matches!(
-                s.client.try_pause(&s.admin),
-                Err(Ok(Error::Paused))
-            ),
+            blocked: matches!(s.client.try_pause(&s.admin), Err(Ok(Error::Paused))),
         },
         EntryPoint {
             name: "unpause",
-            blocked: matches!(
-                s.client.try_unpause(&s.admin),
-                Err(Ok(_))
-            ),
+            blocked: matches!(s.client.try_unpause(&s.admin), Err(Ok(_))),
         },
         EntryPoint {
             name: "register_member",
@@ -159,10 +149,7 @@ fn pause_blocks_all_mutating_entrypoints_except_repay() {
         },
         EntryPoint {
             name: "exit_dao",
-            blocked: matches!(
-                s.client.try_exit_dao(&borrower),
-                Err(Ok(Error::Paused))
-            ),
+            blocked: matches!(s.client.try_exit_dao(&borrower), Err(Ok(Error::Paused))),
         },
         EntryPoint {
             name: "claim_rewards",
@@ -174,7 +161,8 @@ fn pause_blocks_all_mutating_entrypoints_except_repay() {
         EntryPoint {
             name: "claim_rewards_in_asset",
             blocked: matches!(
-                s.client.try_claim_rewards_in_asset(&borrower, &s.token.address),
+                s.client
+                    .try_claim_rewards_in_asset(&borrower, &s.token.address),
                 Err(Ok(Error::Paused))
             ),
         },
@@ -195,19 +183,16 @@ fn pause_blocks_all_mutating_entrypoints_except_repay() {
         EntryPoint {
             name: "request_loan_in_asset",
             blocked: matches!(
-                s.client.try_request_loan_in_asset(
-                    &borrower,
-                    &100,
-                    &s.client.get_token(),
-                    &None,
-                ),
+                s.client
+                    .try_request_loan_in_asset(&borrower, &100, &s.client.get_token(), &None,),
                 Err(Ok(Error::Paused))
             ),
         },
         EntryPoint {
             name: "edit_loan_proposal",
             blocked: matches!(
-                s.client.try_edit_loan_proposal(&borrower, &loan_id, &600, &None),
+                s.client
+                    .try_edit_loan_proposal(&borrower, &loan_id, &600, &None),
                 Err(Ok(Error::Paused))
             ),
         },
@@ -304,14 +289,16 @@ fn pause_blocks_all_mutating_entrypoints_except_repay() {
         EntryPoint {
             name: "vote_on_treasury_proposal",
             blocked: matches!(
-                s.client.try_vote_on_treasury_proposal(&voter, &treasury_id, &true),
+                s.client
+                    .try_vote_on_treasury_proposal(&voter, &treasury_id, &true),
                 Err(Ok(Error::Paused))
             ),
         },
         EntryPoint {
             name: "cancel_treasury_proposal",
             blocked: matches!(
-                s.client.try_cancel_treasury_proposal(&borrower, &treasury_id),
+                s.client
+                    .try_cancel_treasury_proposal(&borrower, &treasury_id),
                 Err(Ok(Error::Paused))
             ),
         },
@@ -331,25 +318,17 @@ fn pause_blocks_all_mutating_entrypoints_except_repay() {
         },
         EntryPoint {
             name: "stake",
-            blocked: matches!(
-                s.client.try_stake(&staker, &100),
-                Err(Ok(Error::Paused))
-            ),
+            blocked: matches!(s.client.try_stake(&staker, &100), Err(Ok(Error::Paused))),
         },
         EntryPoint {
             name: "unstake",
-            blocked: matches!(
-                s.client.try_unstake(&staker, &100),
-                Err(Ok(Error::Paused))
-            ),
+            blocked: matches!(s.client.try_unstake(&staker, &100), Err(Ok(Error::Paused))),
         },
         EntryPoint {
             name: "register_name",
             blocked: matches!(
-                s.client.try_register_name(
-                    &borrower,
-                    &String::from_str(&s.env, "member"),
-                ),
+                s.client
+                    .try_register_name(&borrower, &String::from_str(&s.env, "member"),),
                 Err(Ok(Error::Paused))
             ),
         },
@@ -392,7 +371,11 @@ fn pause_blocks_all_mutating_entrypoints_except_repay() {
 
     for case in cases {
         if case.name.starts_with("repay_") {
-            assert!(!case.blocked, "{} must remain callable while paused", case.name);
+            assert!(
+                !case.blocked,
+                "{} must remain callable while paused",
+                case.name
+            );
         } else {
             assert!(case.blocked, "{} must be pause-gated", case.name);
         }

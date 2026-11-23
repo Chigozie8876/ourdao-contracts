@@ -472,10 +472,9 @@ pub fn get_yield_accumulator(env: &Env, asset: &Address) -> i128 {
 }
 
 pub fn set_yield_accumulator(env: &Env, asset: &Address, value: i128) {
-    env.storage().instance().set(
-        &YieldKey::YieldAccumulator(asset.clone()),
-        &value,
-    );
+    env.storage()
+        .instance()
+        .set(&YieldKey::YieldAccumulator(asset.clone()), &value);
     extend_instance(env);
 }
 

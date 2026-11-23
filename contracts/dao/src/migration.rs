@@ -115,12 +115,7 @@ pub fn seed_pending_yield(
 
     let base_asset = storage::get_token(env)?;
     for entry in yields.iter() {
-        storage::set_yield_snapshot(
-            env,
-            &entry.address,
-            &base_asset,
-            -entry.amount.max(0),
-        );
+        storage::set_yield_snapshot(env, &entry.address, &base_asset, -entry.amount.max(0));
     }
 
     Ok(())

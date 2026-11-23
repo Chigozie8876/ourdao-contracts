@@ -51,7 +51,7 @@ fn treasury_withdrawal_uses_treasury_threshold_not_quorum_bps() {
 #[test]
 fn treasury_withdrawal_above_treasury_threshold_requires_quorum() {
     let s = setup(4); // treasury = 4000, 3 of 4 votes = 75%
-    // Set a lower treasury threshold for testing (this is a test-only scenario)
+                      // Set a lower treasury threshold for testing (this is a test-only scenario)
     let mut policy = s.client.get_policy().unwrap();
     policy.treasury_threshold = 2_000; // 50% of 4000
     s.client.set_loan_policy(&s.admin, &policy);

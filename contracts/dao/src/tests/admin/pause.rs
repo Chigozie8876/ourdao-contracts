@@ -108,7 +108,9 @@ fn pause_blocks_all_mutating_entrypoints() {
         "request_loan should be pause-gated"
     );
 
-    let res = s.client.try_edit_loan_proposal(&borrower, &loan_pid, &600, &None);
+    let res = s
+        .client
+        .try_edit_loan_proposal(&borrower, &loan_pid, &600, &None);
     assert_eq!(
         res,
         Err(Ok(Error::Paused)),
@@ -247,4 +249,3 @@ fn pause_blocks_all_mutating_entrypoints() {
     s.client.unpause(&s.admin);
     assert!(!s.client.is_paused());
 }
-

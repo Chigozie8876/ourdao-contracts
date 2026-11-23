@@ -101,4 +101,11 @@ pub enum Error {
     /// The voter joined (or rejoined) the DAO after the proposal was created,
     /// so they are outside the electorate its quorum was fixed against (#73).
     JoinedAfterProposal = 93,
+    /// Admin list has reached MAX_ADMINS; remove one before adding another (#68).
+    TooManyAdmins = 94,
+    /// Caller is not the admin being targeted; admin removal requires the
+    /// removed admin's co-signature (#67).
+    NotAdmin2 = 95,
+    /// Batch vote call exceeded the maximum number of votes allowed per call.
+    TooManyVotesInBatch = 96,
 }

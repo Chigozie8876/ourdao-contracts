@@ -47,7 +47,8 @@ pub enum Error {
 
     // ---- native-swap modules ----
     NameTaken = 60,
-    /// Reserved for future name registry use
+    /// Reserved: never returned. No contract code path produces it; kept
+    /// because codes are append-only public ABI (#252).
     NameNotFound = 61,
     NoStake = 62,
     InsufficientStake = 63,
@@ -103,8 +104,10 @@ pub enum Error {
     JoinedAfterProposal = 93,
     /// Admin list has reached MAX_ADMINS; remove one before adding another (#68).
     TooManyAdmins = 94,
-    /// Caller is not the admin being targeted; admin removal requires the
-    /// removed admin's co-signature (#67).
+    /// Reserved: never returned (added in 4bb9153 for #67). Admin removal
+    /// enforces the removed admin's co-signature with `require_auth`, which
+    /// aborts instead of returning this code. Kept because codes are
+    /// append-only public ABI (#252).
     NotAdmin2 = 95,
     /// Batch vote call exceeded the maximum number of votes allowed per call.
     TooManyVotesInBatch = 96,

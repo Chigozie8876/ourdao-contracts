@@ -65,8 +65,7 @@ pub fn register_member(env: &Env, member: Address) -> Result<(), Error> {
 
     // Interaction last (checks-effects-interactions): the fee transfer only
     // happens once every state transition above has completed.
-    util::token_client(env)?.transfer(&member, &util::contract_address(env), &fee);
-    util::token_client(env).transfer(&member, util::contract_address(env), &fee);
+    util::token_client(env)?.transfer(&member, util::contract_address(env), &fee);
 
     env.events()
         .publish((symbol_short!("joined"),), (member, fee));
@@ -77,19 +76,15 @@ pub fn register_member(env: &Env, member: Address) -> Result<(), Error> {
 pub fn exit_dao(env: &Env, member: Address) -> Result<(), Error> {
     util::require_initialized(env)?;
     util::require_not_paused(env)?;
-    let mut record = util::require_active_member(env, &member)?;
+    let mut record = util::auth_member(env, &member)?;
     if record.has_active_loan {
         return Err(Error::HasActiveLoan);
     }
 
     let share = calculate_exit_share(env, &member);
     let stake = storage::get_stake(env, &member);
-    let base_asset = storage::get_token(env);
+    let base_asset = storage::get_token(env)?;
     let pending = compute_pending_yield(env, &member);
-    let payout = share + stake + pending;
-
-    if payout > 0 {
-        util::token_client(env)?.transfer(&util::contract_address(env), &member, &payout);
     let assets = storage::get_yield_assets(env);
     let mut payouts = Vec::new(env);
     let base_share_and_stake = share
@@ -175,16 +170,12 @@ pub fn exit_dao(env: &Env, member: Address) -> Result<(), Error> {
 #[allow(deprecated)]
 pub fn claim_rewards(env: &Env, member: Address) -> Result<i128, Error> {
     util::require_initialized(env)?;
-    let base_asset = storage::get_token(env);
+    let base_asset = storage::get_token(env)?;
     claim_rewards_in_asset_internal(env, member, base_asset)
 }
 
 #[allow(deprecated)]
-pub fn claim_rewards_in_asset(
-    env: &Env,
-    member: Address,
-    asset: Address,
-) -> Result<i128, Error> {
+pub fn claim_rewards_in_asset(env: &Env, member: Address, asset: Address) -> Result<i128, Error> {
     claim_rewards_in_asset_internal(env, member, asset)
 }
 
@@ -196,23 +187,17 @@ fn claim_rewards_in_asset_internal(
 ) -> Result<i128, Error> {
     util::require_initialized(env)?;
     util::require_not_paused(env)?;
-    util::require_active_member(env, &member)?;
+    util::auth_member(env, &member)?;
     let pending = compute_pending_yield_in_asset(env, &member, &asset);
     if pending <= 0 {
         return Err(Error::NothingToClaim);
     }
-    // Settle: advance snapshot to current accumulator.
-    let acc = storage::get_yield_accumulator(env);
-    storage::set_yield_snapshot(env, &member, acc);
-    util::token_client(env)?.transfer(&util::contract_address(env), &member, &pending);
-    env.events()
-        .publish((symbol_short!("claimed"),), (member, pending));
     // Settle only this asset so claims cannot consume another token's yield.
     let acc = storage::get_yield_accumulator(env, &asset);
     storage::set_yield_snapshot(env, &member, &asset, acc);
     util::token_client_for(env, &asset).transfer(&util::contract_address(env), &member, &pending);
     let now = env.ledger().timestamp();
-    if asset == storage::get_token(env) {
+    if asset == storage::get_token(env)? {
         env.events().publish(
             (symbol_short!("claimed"), member.clone(), pending),
             StakingRewardClaimed {
@@ -251,15 +236,6 @@ pub fn calculate_exit_share(env: &Env, member: &Address) -> i128 {
     share_from_contributions(treasury, record.contribution, total_contributions)
 }
 
-fn total_active_contributions(env: &Env) -> i128 {
-    storage::get_members(env)
-        .iter()
-        .filter_map(|addr| storage::get_member(env, &addr))
-        .filter(|m| m.status == MemberStatus::ActiveMember)
-        .map(|m| m.contribution)
-        .sum()
-}
-
 /// Single definition of a member's unclaimed yield. Used by `exit_dao`,
 /// `claim_rewards` and the public `get_pending_yield` view so the amount
 /// displayed is always the amount paid.
@@ -267,15 +243,13 @@ pub(crate) fn compute_pending_yield(env: &Env, addr: &Address) -> i128 {
     if !storage::is_initialized(env) {
         return 0;
     }
-    let asset = storage::get_token(env);
+    let Ok(asset) = storage::get_token(env) else {
+        return 0;
+    };
     compute_pending_yield_in_asset(env, addr, &asset)
 }
 
-pub(crate) fn compute_pending_yield_in_asset(
-    env: &Env,
-    addr: &Address,
-    asset: &Address,
-) -> i128 {
+pub(crate) fn compute_pending_yield_in_asset(env: &Env, addr: &Address, asset: &Address) -> i128 {
     if !storage::is_initialized(env) {
         return 0;
     }
@@ -314,7 +288,7 @@ pub fn delegate_vote(env: &Env, delegator: Address, delegatee: Address) -> Resul
     util::require_initialized(env)?;
     util::require_not_paused(env)?;
 
-    util::require_active_member(env, &delegator)?;
+    util::auth_member(env, &delegator)?;
     match storage::get_member(env, &delegatee) {
         Some(m) if m.status == MemberStatus::ActiveMember => Ok(m),
         Some(_) => Err(Error::MemberNotActive),

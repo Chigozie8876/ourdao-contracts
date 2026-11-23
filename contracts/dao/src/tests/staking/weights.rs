@@ -341,4 +341,3 @@ fn stake_threshold_constants_are_discoverable() {
 // ===========================================================================
 // Issue #175: Prevent unstaking while member has an active pending proposal
 // ===========================================================================
-

@@ -1,6 +1,6 @@
 extern crate std;
 
-use soroban_sdk::testutils::{Address as _, Events as _};
+use soroban_sdk::testutils::{Address as _, Events as _, Ledger as _};
 use soroban_sdk::xdr::{ContractEventBody, ScAddress, ScVal};
 use soroban_sdk::{Address, Env, String};
 
@@ -580,9 +580,9 @@ fn disbursement_rechecks_max_loan_to_treasury_ratio() {
     // Leave enough cash to pay the loan, but below the 50% exposure cap.
     let destination = Address::generate(&s.env);
     let reason = String::from_str(&s.env, "shrink treasury");
-    let withdrawal = s
-        .client
-        .propose_treasury_withdrawal(&v1, &2_200, &destination, &reason, &false);
+    let withdrawal =
+        s.client
+            .propose_treasury_withdrawal(&v1, &2_200, &destination, &reason, &false);
     s.client.vote_on_treasury_proposal(&v1, &withdrawal, &true);
     s.client.vote_on_treasury_proposal(&v2, &withdrawal, &true);
     s.client.vote_on_treasury_proposal(&v3, &withdrawal, &true);
@@ -802,7 +802,10 @@ fn edit_loan_proposal_updates_and_clears_metadata_cid() {
 
     s.client
         .edit_loan_proposal(&borrower, &pid, &600, &Some(replacement.clone()));
-    assert_eq!(s.client.get_loan_proposal(&pid).unwrap().metadata_cid, Some(replacement));
+    assert_eq!(
+        s.client.get_loan_proposal(&pid).unwrap().metadata_cid,
+        Some(replacement)
+    );
 
     s.client.edit_loan_proposal(&borrower, &pid, &700, &None);
     assert_eq!(s.client.get_loan_proposal(&pid).unwrap().metadata_cid, None);
@@ -1297,15 +1300,11 @@ fn default_in_second_asset() {
         .client
         .request_loan_in_asset(&v1, &1_000, &asset.address, &None);
     advance(&s.env, EDITING + 1);
-    s.client.vote_on_loan_proposal(&borrower, &asset_yield_pid, &true);
+    s.client
+        .vote_on_loan_proposal(&borrower, &asset_yield_pid, &true);
     s.client.vote_on_loan_proposal(&v2, &asset_yield_pid, &true);
     let asset_yield_loan = s.client.get_loan(&asset_yield_pid).unwrap();
-    mint_asset(
-        &s,
-        &asset.address,
-        &v1,
-        asset_yield_loan.total_repayment,
-    );
+    mint_asset(&s, &asset.address, &v1, asset_yield_loan.total_repayment);
     s.client
         .repay_loan_in_asset(&v1, &asset_yield_pid, &asset.address);
     let accrued_base = s.client.get_pending_yield(&borrower);
@@ -1560,7 +1559,6 @@ fn loan_lifecycle_in_second_asset() {
     assert_eq!(s.client.get_treasury_balance(), base_treasury - base_yield);
 }
 
-
 // Issue #277: non-base loan sizing must use that asset's treasury, never base-token liquidity.
 #[test]
 fn second_asset_loan_ratio_uses_second_asset_balance() {
@@ -1582,7 +1580,6 @@ fn second_asset_loan_ratio_uses_second_asset_balance() {
         before_asset
     );
 }
-
 
 // Issue #278: naming the wrong repayment asset must fail before any transfer.
 #[test]
@@ -1640,8 +1637,7 @@ fn many_tiny_partial_repayments_settle_exactly() {
         let remaining = total_repayment - amount_repaid;
         let payment = installment.min(remaining);
 
-        s.client
-            .repay_loan_partial(&borrower, &pid, &payment);
+        s.client.repay_loan_partial(&borrower, &pid, &payment);
         amount_repaid += payment;
 
         let loan = s.client.get_loan(&pid).unwrap();
@@ -1662,7 +1658,10 @@ fn many_tiny_partial_repayments_settle_exactly() {
         // Interest yield is split equally across the three active members.
         // The accumulator carries indivisible remainders between payments.
         let expected_yield_per_member = interest_repaid / 3;
-        assert_eq!(s.client.get_pending_yield(&borrower), expected_yield_per_member);
+        assert_eq!(
+            s.client.get_pending_yield(&borrower),
+            expected_yield_per_member
+        );
         assert_eq!(s.client.get_pending_yield(&v1), expected_yield_per_member);
         assert_eq!(s.client.get_pending_yield(&v2), expected_yield_per_member);
 
@@ -1824,7 +1823,10 @@ fn shortening_grace_after_disbursement_does_not_accelerate_default() {
         .ledger()
         .with_mut(|li| li.timestamp = loan.due_time + 10 * 24 * 60 * 60);
     s.client.mark_loan_defaulted(&id);
-    assert_eq!(s.client.get_loan(&id).unwrap().status, LoanStatus::Defaulted);
+    assert_eq!(
+        s.client.get_loan(&id).unwrap().status,
+        LoanStatus::Defaulted
+    );
 }
 
 // ── #73: quorum is fixed at proposal creation ────────────────────────────────

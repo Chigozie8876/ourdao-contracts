@@ -20,7 +20,10 @@ fn only_admin_can_unpause_even_when_a_dedicated_pauser_exists() {
 
     // The emergency pauser may stop the DAO but must not be able to resume it.
     assert_eq!(s.client.try_unpause(&pauser), Err(Ok(Error::NotAdmin)));
-    assert!(s.client.is_paused(), "unauthorised unpause must not change state");
+    assert!(
+        s.client.is_paused(),
+        "unauthorised unpause must not change state"
+    );
 
     // An unrelated address must likewise be rejected without clearing the pause.
     assert_eq!(s.client.try_unpause(&outsider), Err(Ok(Error::NotAdmin)));
@@ -123,14 +126,20 @@ fn initialize_failure_leaves_no_state_and_allows_subsequent_success() {
 
     // Subsequent initialize with a valid token succeeds
     let sac = env.register_stellar_asset_contract_v2(Address::generate(&env));
-    assert_eq!(client.try_initialize(&admins, &5_100u32, &FEE, &sac.address(), &policy()), Ok(Ok(())));
+    assert_eq!(
+        client.try_initialize(&admins, &5_100u32, &FEE, &sac.address(), &policy()),
+        Ok(Ok(()))
+    );
     assert!(client.is_initialized());
 }
 
 // Issue #497: ProposalVote Copy and Eq/PartialEq derives
 #[test]
 fn proposal_vote_derives_work_as_expected() {
-    let v1 = crate::types::ProposalVote { proposal_id: 1, vote: true };
+    let v1 = crate::types::ProposalVote {
+        proposal_id: 1,
+        vote: true,
+    };
     let v2 = v1; // Copy derive test
     assert_eq!(v1, v2);
 }
@@ -544,7 +553,10 @@ fn get_version_and_dao_summary_version_always_agree() {
     let v1 = s.client.get_version();
     let summary = s.client.get_dao_summary();
     assert_eq!(v1, summary.version);
-    assert_eq!(v1, soroban_sdk::String::from_str(&s.env, env!("CARGO_PKG_VERSION")));
+    assert_eq!(
+        v1,
+        soroban_sdk::String::from_str(&s.env, env!("CARGO_PKG_VERSION"))
+    );
 }
 
 // Issue #526: Parametrized pause guards on entrypoints added since PAUSE_FUNCTIONALITY.md
@@ -566,7 +578,13 @@ fn test_pause_guards_on_newer_entrypoints() {
     );
 
     // vote_batch blocked
-    let votes = soroban_sdk::vec![&s.env, crate::types::ProposalVote { proposal_id: 1, vote: true }];
+    let votes = soroban_sdk::vec![
+        &s.env,
+        crate::types::ProposalVote {
+            proposal_id: 1,
+            vote: true
+        }
+    ];
     assert_eq!(
         s.client.try_vote_batch(&member, &votes),
         Err(Ok(Error::Paused))
@@ -589,14 +607,16 @@ fn test_pause_guards_on_newer_entrypoints() {
 
     // Multi-token loan request blocked
     assert_eq!(
-        s.client.try_request_loan_in_asset(&member, &100, &token, &None),
+        s.client
+            .try_request_loan_in_asset(&member, &100, &token, &None),
         Err(Ok(Error::Paused))
     );
 
     // Multi-token withdrawal proposal blocked
     let reason = soroban_sdk::String::from_str(&s.env, "grant");
     assert_eq!(
-        s.client.try_propose_withdrawal_in_asset(&member, &100, &token, &other, &reason, &false),
+        s.client
+            .try_propose_withdrawal_in_asset(&member, &100, &token, &other, &reason, &false),
         Err(Ok(Error::Paused))
     );
 }
@@ -605,7 +625,9 @@ fn test_pause_guards_on_newer_entrypoints() {
 #[test]
 fn removed_token_balance_reporting() {
     let s = setup(1);
-    let other_sac = s.env.register_stellar_asset_contract_v2(Address::generate(&s.env));
+    let other_sac = s
+        .env
+        .register_stellar_asset_contract_v2(Address::generate(&s.env));
     let other_token = other_sac.address();
 
     // Whitelist new token
@@ -620,7 +642,6 @@ fn removed_token_balance_reporting() {
 
     // get_treasury_balance_in_asset reports the token balance accurately
     assert_eq!(s.client.get_treasury_balance_in_asset(&other_token), 0);
-}
 }
 
 #[test]
@@ -644,7 +665,10 @@ fn pending_token_additions_remain_indexed_until_execution() {
     let second_eta = s.client.get_pending_token_addition(&second).unwrap();
     assert_eq!(
         s.client.get_pending_token_additions(),
-        Vec::from_array(&s.env, [(first.clone(), first_eta), (second.clone(), second_eta)])
+        Vec::from_array(
+            &s.env,
+            [(first.clone(), first_eta), (second.clone(), second_eta)]
+        )
     );
 
     advance(&s.env, TIMELOCK_DURATION);

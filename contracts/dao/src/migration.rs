@@ -6,7 +6,7 @@
 /// decommissioned deployment, as described in `docs/MIGRATION.md`.
 ///
 /// All seed functions are:
-///   - Admin-only (`require_admin`).
+///   - Admin-only (`auth_admin`).
 ///   - Gated behind the `MigrationSeedingLocked` flag; rejected once
 ///     `lock_seeding()` has been called.
 ///   - Idempotent per key: re-seeding the same address/id overwrites, so a
@@ -38,7 +38,7 @@ pub fn seed_members(
     caller: soroban_sdk::Address,
     members: Vec<Member>,
 ) -> Result<(), Error> {
-    util::require_admin(env, &caller)?;
+    util::auth_admin(env, &caller)?;
     require_seeding_open(env)?;
     storage::extend_instance(env);
 
@@ -86,7 +86,7 @@ pub fn seed_stakes(
     caller: soroban_sdk::Address,
     stakes: Vec<SeedStakeEntry>,
 ) -> Result<(), Error> {
-    util::require_admin(env, &caller)?;
+    util::auth_admin(env, &caller)?;
     require_seeding_open(env)?;
     storage::extend_instance(env);
 
@@ -109,18 +109,13 @@ pub fn seed_pending_yield(
     caller: soroban_sdk::Address,
     yields: Vec<SeedYieldEntry>,
 ) -> Result<(), Error> {
-    util::require_admin(env, &caller)?;
+    util::auth_admin(env, &caller)?;
     require_seeding_open(env)?;
     storage::extend_instance(env);
 
-    let base_asset = storage::get_token(env);
+    let base_asset = storage::get_token(env)?;
     for entry in yields.iter() {
-        storage::set_yield_snapshot(
-            env,
-            &entry.address,
-            &base_asset,
-            -entry.amount.max(0),
-        );
+        storage::set_yield_snapshot(env, &entry.address, &base_asset, -entry.amount.max(0));
     }
 
     Ok(())
@@ -129,7 +124,7 @@ pub fn seed_pending_yield(
 /// Seeds loan records. Advances `NextProposalId` past every seeded loan id so
 /// fresh proposals never collide with seeded ones.
 pub fn seed_loans(env: &Env, caller: soroban_sdk::Address, loans: Vec<Loan>) -> Result<(), Error> {
-    util::require_admin(env, &caller)?;
+    util::auth_admin(env, &caller)?;
     require_seeding_open(env)?;
     storage::extend_instance(env);
 
@@ -142,7 +137,7 @@ pub fn seed_loans(env: &Env, caller: soroban_sdk::Address, loans: Vec<Loan>) -> 
         storage::set_loan(env, &loan);
         storage::adjust_outstanding_principal(
             env,
-            &storage::get_loan_asset(env, loan.id),
+            &storage::get_loan_asset(env, loan.id)?,
             crate::loans::principal_outstanding(&loan) - before,
         );
         // Ensure the next-id counter won't reuse this id.
@@ -157,7 +152,7 @@ pub fn seed_names(
     caller: soroban_sdk::Address,
     names: Vec<SeedNameEntry>,
 ) -> Result<(), Error> {
-    util::require_admin(env, &caller)?;
+    util::auth_admin(env, &caller)?;
     require_seeding_open(env)?;
     storage::extend_instance(env);
 
@@ -173,7 +168,7 @@ pub fn seed_docs(
     caller: soroban_sdk::Address,
     docs: Vec<SeedDocEntry>,
 ) -> Result<(), Error> {
-    util::require_admin(env, &caller)?;
+    util::auth_admin(env, &caller)?;
     require_seeding_open(env)?;
     storage::extend_instance(env);
 
@@ -196,7 +191,7 @@ pub fn seed_docs(
 /// after this. Call only once independent verification (procedure step 8 in
 /// `docs/MIGRATION.md`) is complete.
 pub fn lock_seeding(env: &Env, caller: soroban_sdk::Address) -> Result<(), Error> {
-    util::require_admin(env, &caller)?;
+    util::auth_admin(env, &caller)?;
     if storage::is_seeding_locked(env) {
         return Err(Error::SeedingAlreadyLocked);
     }

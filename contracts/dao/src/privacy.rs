@@ -81,7 +81,7 @@ pub fn commit_vote(
 ) -> Result<(), Error> {
     util::require_initialized(env)?;
     util::require_not_paused(env)?;
-    let member = util::require_active_member(env, &voter)?;
+    let member = util::auth_member(env, &voter)?;
 
     let proposal =
         storage::get_treasury_proposal(env, proposal_id).ok_or(Error::TreasuryProposalNotFound)?;
@@ -122,7 +122,7 @@ pub fn reveal_vote(
 ) -> Result<(), Error> {
     util::require_initialized(env)?;
     util::require_not_paused(env)?;
-    util::require_active_member(env, &voter)?;
+    util::auth_member(env, &voter)?;
 
     let proposal =
         storage::get_treasury_proposal(env, proposal_id).ok_or(Error::TreasuryProposalNotFound)?;

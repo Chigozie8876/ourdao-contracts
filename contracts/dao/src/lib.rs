@@ -1,4 +1,7 @@
 #![no_std]
+// A panic on-chain gives the caller no error code, so contract code returns
+// an `Error` instead of unwrapping (#253). Tests may still unwrap.
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 //! OurDAO — a member-owned lending DAO for Stellar Soroban.
 //!
 //! All value moves through a single configurable token set at initialization
@@ -458,13 +461,8 @@ impl OurDao {
     }
 
     pub fn get_loan_policy(env: Env) -> Result<LoanPolicy, Error> {
-        storage::get_policy(&env)
-    }
-
-    pub fn get_admins(env: Env) -> Result<Vec<Address>, Error> {
-        storage::get_admins(&env)
         util::require_initialized(&env)?;
-        Ok(storage::get_policy(&env))
+        storage::get_policy(&env)
     }
 
     pub fn get_pending_policy_update(env: Env) -> Option<PendingPolicyUpdate> {
@@ -473,7 +471,7 @@ impl OurDao {
 
     pub fn get_admins(env: Env) -> Result<Vec<Address>, Error> {
         util::require_initialized(&env)?;
-        Ok(storage::get_admins(&env))
+        storage::get_admins(&env)
     }
 
     pub fn is_admin(env: Env, address: Address) -> Result<bool, Error> {
@@ -528,18 +526,13 @@ impl OurDao {
     }
 
     pub fn get_consensus_threshold(env: Env) -> Result<u32, Error> {
+        util::require_initialized(&env)?;
         storage::get_threshold(&env)
     }
 
     pub fn get_token(env: Env) -> Result<Address, Error> {
+        util::require_initialized(&env)?;
         storage::get_token(&env)
-        util::require_initialized(&env)?;
-        Ok(storage::get_threshold(&env))
-    }
-
-    pub fn get_token(env: Env) -> Result<Address, Error> {
-        util::require_initialized(&env)?;
-        Ok(storage::get_token(&env))
     }
 
     /// Whether `initialize` has run. Clients should check this before relying
@@ -565,7 +558,8 @@ impl OurDao {
             treasury_balance: util::treasury_balance(&env),
             treasury_balances,
             total_staked: storage::get_total_staked(&env),
-            consensus_threshold: storage::get_threshold(&env),
+            // 0 before initialisation, matching the other zeroed counters.
+            consensus_threshold: storage::get_threshold(&env).unwrap_or(0),
             paused: storage::is_paused(&env),
             version: String::from_str(&env, env!("CARGO_PKG_VERSION")),
         }
@@ -677,8 +671,6 @@ impl OurDao {
         }
     }
 
-    pub fn calculate_loan_terms(env: Env, amount: i128) -> Result<LoanTerms, Error> {
-        loans::calculate_loan_terms(&env, amount)
     /// Quotes the terms a loan of `amount` would carry right now. The quote
     /// can only be honoured when `amount <= max_loan`: with an empty or
     /// negative treasury `max_loan` is 0 and the rate shown is the policy
@@ -686,7 +678,7 @@ impl OurDao {
     /// `loans::calculate_loan_terms`.
     pub fn calculate_loan_terms(env: Env, amount: i128) -> Result<LoanTerms, Error> {
         util::require_initialized(&env)?;
-        Ok(loans::calculate_loan_terms(&env, amount))
+        loans::calculate_loan_terms(&env, amount)
     }
 
     pub fn calculate_exit_share(env: Env, member: Address) -> Result<i128, Error> {
@@ -706,7 +698,10 @@ impl OurDao {
         let from = start.min(len);
         let to = (start + limit).min(len);
         for i in from..to {
-            let addr = all.get(i).unwrap();
+            // `i < len`, so the index is always present.
+            let Some(addr) = all.get(i) else {
+                continue;
+            };
             if let Some(m) = storage::get_member(&env, &addr) {
                 out.push_back(m);
             }

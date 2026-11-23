@@ -83,8 +83,16 @@ pub fn is_pauser(env: &Env, who: &Address) -> bool {
     storage::get_pauser(env).as_ref() == Some(who)
 }
 
-/// Authorizes `caller` and asserts admin membership.
-pub fn require_admin(env: &Env, caller: &Address) -> Result<(), Error> {
+// ---- role auth helpers (#254) ----
+//
+// Each one authorizes `caller` (`require_auth`) and then checks its role, in
+// that order. A state-changing entrypoint that needs a role calls exactly one
+// of them. Entrypoints with no role to check (`initialize`,
+// `register_member`, `repay_loan*`, `unstake`) call `require_auth` directly,
+// as does `remove_admin` for the co-signature of the admin being removed.
+
+/// Authorizes `caller` and asserts they are an admin.
+pub fn auth_admin(env: &Env, caller: &Address) -> Result<(), Error> {
     caller.require_auth();
     if is_admin(env, caller) {
         Ok(())
@@ -93,13 +101,24 @@ pub fn require_admin(env: &Env, caller: &Address) -> Result<(), Error> {
     }
 }
 
-/// Authorizes `caller` and returns their active-member record, or errors.
-pub fn require_active_member(env: &Env, caller: &Address) -> Result<Member, Error> {
+/// Authorizes `caller` and returns their active-member record.
+pub fn auth_member(env: &Env, caller: &Address) -> Result<Member, Error> {
     caller.require_auth();
     match storage::get_member(env, caller) {
         Some(m) if m.status == MemberStatus::ActiveMember => Ok(m),
         Some(_) => Err(Error::MemberNotActive),
         None => Err(Error::NotMember),
+    }
+}
+
+/// Authorizes `caller` and asserts they may pause: an admin or the assigned
+/// pauser. Unpausing is admin-only (`auth_admin`, #319).
+pub fn auth_pauser(env: &Env, caller: &Address) -> Result<(), Error> {
+    caller.require_auth();
+    if is_admin(env, caller) || is_pauser(env, caller) {
+        Ok(())
+    } else {
+        Err(Error::NotAdmin)
     }
 }
 

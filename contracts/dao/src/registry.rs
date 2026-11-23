@@ -15,7 +15,7 @@ use crate::util;
 pub fn register_name(env: &Env, owner: Address, name: String) -> Result<(), Error> {
     util::require_initialized(env)?;
     util::require_not_paused(env)?;
-    util::require_active_member(env, &owner)?;
+    util::auth_member(env, &owner)?;
 
     // Validate length bounds.
     let len = name.len();

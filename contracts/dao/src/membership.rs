@@ -76,7 +76,7 @@ pub fn register_member(env: &Env, member: Address) -> Result<(), Error> {
 pub fn exit_dao(env: &Env, member: Address) -> Result<(), Error> {
     util::require_initialized(env)?;
     util::require_not_paused(env)?;
-    let mut record = util::require_active_member(env, &member)?;
+    let mut record = util::auth_member(env, &member)?;
     if record.has_active_loan {
         return Err(Error::HasActiveLoan);
     }
@@ -191,7 +191,7 @@ fn claim_rewards_in_asset_internal(
 ) -> Result<i128, Error> {
     util::require_initialized(env)?;
     util::require_not_paused(env)?;
-    util::require_active_member(env, &member)?;
+    util::auth_member(env, &member)?;
     let pending = compute_pending_yield_in_asset(env, &member, &asset);
     if pending <= 0 {
         return Err(Error::NothingToClaim);
@@ -297,7 +297,7 @@ pub fn delegate_vote(env: &Env, delegator: Address, delegatee: Address) -> Resul
     util::require_initialized(env)?;
     util::require_not_paused(env)?;
 
-    util::require_active_member(env, &delegator)?;
+    util::auth_member(env, &delegator)?;
     match storage::get_member(env, &delegatee) {
         Some(m) if m.status == MemberStatus::ActiveMember => Ok(m),
         Some(_) => Err(Error::MemberNotActive),

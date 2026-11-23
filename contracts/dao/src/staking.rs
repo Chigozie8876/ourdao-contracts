@@ -17,7 +17,7 @@ use crate::util;
 pub fn stake(env: &Env, member: Address, amount: i128) -> Result<(), Error> {
     util::require_initialized(env)?;
     util::require_not_paused(env)?;
-    util::require_active_member(env, &member)?;
+    util::auth_member(env, &member)?;
     if amount <= 0 {
         return Err(Error::InvalidAmount);
     }

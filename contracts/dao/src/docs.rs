@@ -41,7 +41,7 @@ pub fn attach_document(
 ) -> Result<(), Error> {
     util::require_initialized(env)?;
     util::require_not_paused(env)?;
-    util::require_active_member(env, &caller)?;
+    util::auth_member(env, &caller)?;
     if content_hash.len() > 64 {
         return Err(Error::DocumentTooLarge);
     }

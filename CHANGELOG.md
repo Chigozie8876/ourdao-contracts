@@ -5,6 +5,7 @@ All notable changes to `ourdao-contracts` are documented here. The format follow
 ## [Unreleased]
 
 ### Changed
+- Role checks go through one helper per role in `util.rs`: `auth_admin`, `auth_member` (renamed from `require_admin` / `require_active_member`) and the new `auth_pauser`, each doing `require_auth` and then the role check. `pause` and `unpause` use them instead of inline checks. No behaviour change (#254).
 - Contract (non-test) code denies `clippy::unwrap_used` and `clippy::expect_used`, so an on-chain failure returns an `Error` instead of panicking. The one remaining `unwrap()` (`list_members`) is replaced (#253).
 - `Error::NameNotFound` (61) and `Error::NotAdmin2` (95) are documented as reserved: no contract code path returns them. Codes are unchanged (#252).
 - Added a regression test proving non-base loans use the loan asset's treasury balance for ratio checks and pricing (#277).

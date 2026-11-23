@@ -283,6 +283,8 @@ Numeric codes are stable and part of the ABI — new variants get appended rathe
 | 92 | Multi-token safety: `TokenHasBalance` |
 | 93 | Appended: `JoinedAfterProposal` — voter joined after the proposal was created (#73) |
 
+**Reserved codes** (#252): `NameNotFound` (61) and `NotAdmin2` (95) are never returned by the contract. They stay in `Error` because codes are append-only; see the doc comments in `contracts/dao/src/error.rs`.
+
 ## Build & test
 
 Requires the Rust `wasm32v1-none` target (Rust 1.84+) and the [`stellar` CLI](https://developers.stellar.org/docs/tools/developer-tools/cli/stellar-cli).

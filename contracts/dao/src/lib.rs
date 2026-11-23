@@ -1,4 +1,7 @@
 #![no_std]
+// A panic on-chain gives the caller no error code, so contract code returns
+// an `Error` instead of unwrapping (#253). Tests may still unwrap.
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 //! OurDAO — a member-owned lending DAO for Stellar Soroban.
 //!
 //! All value moves through a single configurable token set at initialization
@@ -459,7 +462,7 @@ impl OurDao {
 
     pub fn get_loan_policy(env: Env) -> Result<LoanPolicy, Error> {
         util::require_initialized(&env)?;
-        Ok(storage::get_policy(&env)?)
+        storage::get_policy(&env)
     }
 
     pub fn get_pending_policy_update(env: Env) -> Option<PendingPolicyUpdate> {
@@ -468,7 +471,7 @@ impl OurDao {
 
     pub fn get_admins(env: Env) -> Result<Vec<Address>, Error> {
         util::require_initialized(&env)?;
-        Ok(storage::get_admins(&env)?)
+        storage::get_admins(&env)
     }
 
     pub fn is_admin(env: Env, address: Address) -> Result<bool, Error> {
@@ -524,12 +527,12 @@ impl OurDao {
 
     pub fn get_consensus_threshold(env: Env) -> Result<u32, Error> {
         util::require_initialized(&env)?;
-        Ok(storage::get_threshold(&env)?)
+        storage::get_threshold(&env)
     }
 
     pub fn get_token(env: Env) -> Result<Address, Error> {
         util::require_initialized(&env)?;
-        Ok(storage::get_token(&env)?)
+        storage::get_token(&env)
     }
 
     /// Whether `initialize` has run. Clients should check this before relying
@@ -695,7 +698,10 @@ impl OurDao {
         let from = start.min(len);
         let to = (start + limit).min(len);
         for i in from..to {
-            let addr = all.get(i).unwrap();
+            // `i < len`, so the index is always present.
+            let Some(addr) = all.get(i) else {
+                continue;
+            };
             if let Some(m) = storage::get_member(&env, &addr) {
                 out.push_back(m);
             }

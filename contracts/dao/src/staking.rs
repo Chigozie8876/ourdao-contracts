@@ -35,7 +35,7 @@ pub fn stake(env: &Env, member: Address, amount: i128) -> Result<(), Error> {
     // Staking is always denominated in the DAO's configured base token.
     // Move the principal into the DAO contract after accounting writes; a
     // failed transfer reverts the whole Soroban transaction.
-    util::token_client(env)?.transfer(&member, &util::contract_address(env), &amount);
+    util::token_client(env)?.transfer(&member, util::contract_address(env), &amount);
 
     let voting_weight = util::voting_weight(env, &member);
     env.events().publish(

@@ -224,8 +224,6 @@ pub fn edit_loan_proposal(
         }
     }
 
-    let prev_amount = proposal.amount;
-    let prev_total_repayment = proposal.total_repayment;
     let asset = storage::get_loan_asset(env, proposal_id)?;
     let terms = quote_terms(
         env,
@@ -467,7 +465,7 @@ fn approve_and_disburse(env: &Env, proposal: &LoanProposal) -> Result<(), Error>
     let max_loan = treasury
         .checked_mul(policy.max_loan_to_treasury_ratio as i128)
         .ok_or(Error::ExceedsTreasuryRatio)?
-        / crate::types::BASIS_POINTS as i128;
+        / crate::types::BASIS_POINTS;
     if proposal.amount > max_loan {
         return Err(Error::ExceedsTreasuryRatio);
     }

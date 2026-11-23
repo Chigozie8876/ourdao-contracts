@@ -240,14 +240,6 @@ pub fn calculate_exit_share(env: &Env, member: &Address) -> i128 {
     share_from_contributions(treasury, record.contribution, total_contributions)
 }
 
-fn total_active_contributions(env: &Env) -> i128 {
-    storage::get_members(env)
-        .iter()
-        .filter_map(|addr| storage::get_member(env, &addr))
-        .filter(|m| m.status == MemberStatus::ActiveMember)
-        .map(|m| m.contribution)
-        .sum()
-}
 
 /// Single definition of a member's unclaimed yield. Used by `exit_dao`,
 /// `claim_rewards` and the public `get_pending_yield` view so the amount

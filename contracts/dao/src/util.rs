@@ -211,7 +211,15 @@ pub fn require_in_electorate(member: &Member, proposal_created_at: u64) -> Resul
 
 /// Ceil-division consensus bar over the active-member base, in basis points:
 /// `(base * threshold + BP - 1) / BP`.
+///
+/// When `active_members == 0` the formula evaluates to 0, which makes every
+/// proposal instantly quorate before anyone has voted — a critical bug (#74).
+/// Guard: always require at least 1 vote so an empty-DAO proposal cannot
+/// self-approve.
 pub fn required_votes(active_members: u32, threshold_bps: u32) -> i128 {
+    if active_members == 0 {
+        return 1;
+    }
     let base = active_members as i128;
     let bp = crate::types::BASIS_POINTS;
     (base * threshold_bps as i128 + bp - 1) / bp

@@ -65,8 +65,7 @@ pub fn register_member(env: &Env, member: Address) -> Result<(), Error> {
 
     // Interaction last (checks-effects-interactions): the fee transfer only
     // happens once every state transition above has completed.
-    util::token_client(env)?.transfer(&member, &util::contract_address(env), &fee);
-    util::token_client(env).transfer(&member, util::contract_address(env), &fee);
+    util::token_client(env)?.transfer(&member, util::contract_address(env), &fee);
 
     env.events()
         .publish((symbol_short!("joined"),), (member, fee));
@@ -84,12 +83,8 @@ pub fn exit_dao(env: &Env, member: Address) -> Result<(), Error> {
 
     let share = calculate_exit_share(env, &member);
     let stake = storage::get_stake(env, &member);
-    let base_asset = storage::get_token(env);
+    let base_asset = storage::get_token(env)?;
     let pending = compute_pending_yield(env, &member);
-    let payout = share + stake + pending;
-
-    if payout > 0 {
-        util::token_client(env)?.transfer(&util::contract_address(env), &member, &payout);
     let assets = storage::get_yield_assets(env);
     let mut payouts = Vec::new(env);
     let base_share_and_stake = share
@@ -175,7 +170,7 @@ pub fn exit_dao(env: &Env, member: Address) -> Result<(), Error> {
 #[allow(deprecated)]
 pub fn claim_rewards(env: &Env, member: Address) -> Result<i128, Error> {
     util::require_initialized(env)?;
-    let base_asset = storage::get_token(env);
+    let base_asset = storage::get_token(env)?;
     claim_rewards_in_asset_internal(env, member, base_asset)
 }
 
@@ -201,18 +196,12 @@ fn claim_rewards_in_asset_internal(
     if pending <= 0 {
         return Err(Error::NothingToClaim);
     }
-    // Settle: advance snapshot to current accumulator.
-    let acc = storage::get_yield_accumulator(env);
-    storage::set_yield_snapshot(env, &member, acc);
-    util::token_client(env)?.transfer(&util::contract_address(env), &member, &pending);
-    env.events()
-        .publish((symbol_short!("claimed"),), (member, pending));
     // Settle only this asset so claims cannot consume another token's yield.
     let acc = storage::get_yield_accumulator(env, &asset);
     storage::set_yield_snapshot(env, &member, &asset, acc);
     util::token_client_for(env, &asset).transfer(&util::contract_address(env), &member, &pending);
     let now = env.ledger().timestamp();
-    if asset == storage::get_token(env) {
+    if asset == storage::get_token(env)? {
         env.events().publish(
             (symbol_short!("claimed"), member.clone(), pending),
             StakingRewardClaimed {
@@ -267,7 +256,9 @@ pub(crate) fn compute_pending_yield(env: &Env, addr: &Address) -> i128 {
     if !storage::is_initialized(env) {
         return 0;
     }
-    let asset = storage::get_token(env);
+    let Ok(asset) = storage::get_token(env) else {
+        return 0;
+    };
     compute_pending_yield_in_asset(env, addr, &asset)
 }
 

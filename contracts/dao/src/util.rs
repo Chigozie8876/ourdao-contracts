@@ -15,7 +15,7 @@ pub const MAX_STAKE_BONUS: i128 = 5;
 /// The unconditional vote every active member gets, before any stake boost.
 pub const BASE_VOTE_WEIGHT: i128 = 1;
 
-pub fn token_client(env: &Env) -> Result<token::Client<'_>, crate::error::Error> {
+pub fn token_client(env: &Env) -> Result<token::Client<'_>, Error> {
     Ok(token::Client::new(env, &storage::get_token(env)?))
 }
 
@@ -31,9 +31,11 @@ pub fn contract_address(env: &Env) -> Address {
 /// Treasury == the DAO's own token balance minus funds earmarked as stake,
 /// so staked principal is never lent out or counted as distributable equity.
 pub fn treasury_balance(env: &Env) -> i128 {
-    let bal = token_client(env).map(|c| c.balance(&contract_address(env))).unwrap_or(0);
-    bal - storage::get_total_staked(env)
-    treasury_balance_in_asset(env, &storage::get_token(env))
+    // An uninitialised DAO has no base token and therefore no treasury.
+    match storage::get_token(env) {
+        Ok(token) => treasury_balance_in_asset(env, &token),
+        Err(_) => 0,
+    }
 }
 
 /// The DAO's raw holding of `asset`, staked funds included.
@@ -50,7 +52,7 @@ pub fn treasury_balance_in_asset(env: &Env, asset: &Address) -> i128 {
 /// Member stake held in `asset`: the total staked for the base token, zero
 /// for any other asset.
 pub fn staked_in_asset(env: &Env, asset: &Address) -> i128 {
-    if *asset == storage::get_token(env) {
+    if storage::get_token(env).is_ok_and(|token| token == *asset) {
         storage::get_total_staked(env)
     } else {
         0
@@ -74,8 +76,7 @@ pub fn require_not_paused(env: &Env) -> Result<(), Error> {
 }
 
 pub fn is_admin(env: &Env, who: &Address) -> bool {
-    storage::get_admins(env).map(|a| a.iter().any(|a| &a == who)).unwrap_or(false)
-    storage::get_admins(env).contains(who)
+    storage::get_admins(env).is_ok_and(|admins| admins.contains(who))
 }
 
 pub fn is_pauser(env: &Env, who: &Address) -> bool {
@@ -239,7 +240,7 @@ pub fn reserved_loan_commitments(env: &Env, asset: &Address) -> i128 {
     for id in 0..count {
         if let Some(proposal) = storage::get_loan_proposal(env, id) {
             if proposal.status == ProposalStatus::ApprovedPendingDisbursement
-                && storage::get_loan_asset(env, id) == *asset
+                && storage::get_loan_asset(env, id).is_ok_and(|a| a == *asset)
             {
                 total += proposal.amount;
             }

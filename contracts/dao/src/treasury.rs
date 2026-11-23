@@ -18,7 +18,7 @@ pub fn propose_withdrawal(
     private: bool,
 ) -> Result<u32, Error> {
     util::require_initialized(env)?;
-    let base = storage::get_token(env);
+    let base = storage::get_token(env)?;
     propose_withdrawal_in_asset(env, proposer, amount, base, destination, reason, private)
 }
 
@@ -58,7 +58,7 @@ pub fn propose_withdrawal_in_asset(
     }
 
     let id = storage::next_id(env, storage::DataKey::NextTreasuryId);
-    let policy = storage::get_policy(env);
+    let policy = storage::get_policy(env)?;
     let proposal = TreasuryProposal {
         id,
         proposer,
@@ -70,8 +70,6 @@ pub fn propose_withdrawal_in_asset(
         for_votes: 0,
         against_votes: 0,
         votes_cast: 0,
-        voting_period: storage::get_policy(env)?.voting_period,
-        treasury_threshold: storage::get_policy(env)?.treasury_threshold,
         voting_period: policy.voting_period,
         treasury_threshold: policy.treasury_threshold,
         private,
@@ -80,7 +78,7 @@ pub fn propose_withdrawal_in_asset(
     storage::set_treasury_proposal(env, &proposal);
     // Only non-base assets are recorded, so base-token proposals keep their
     // existing storage footprint and events.
-    if asset != storage::get_token(env) {
+    if asset != storage::get_token(env)? {
         storage::set_treasury_asset(env, id, &asset);
         env.events()
             .publish((symbol_short!("tre_asset"),), (id, asset));
@@ -220,12 +218,11 @@ pub fn execute_approved(env: &Env, proposal_id: u32) -> Result<(), Error> {
 
 #[allow(deprecated)]
 fn execute(env: &Env, proposal: &mut TreasuryProposal) -> Result<(), Error> {
-    let asset = storage::get_treasury_asset(env, proposal.id);
+    let asset = storage::get_treasury_asset(env, proposal.id)?;
     if util::treasury_balance_in_asset(env, &asset) < proposal.amount {
         return Err(Error::InsufficientTreasury);
     }
     proposal.status = ProposalStatus::Executed;
-    util::token_client(env)?.transfer(
     // Commit the effect before interacting with the external asset contract.
     storage::set_treasury_proposal(env, proposal);
     util::token_client_for(env, &asset).transfer(
@@ -264,7 +261,7 @@ pub fn cancel_treasury_proposal(
     let now = env.ledger().timestamp();
     // Treasury proposals don't carry an explicit editing window; treat the
     // editing period as the policy's editing_period from creation.
-    let policy = storage::get_policy(env);
+    let policy = storage::get_policy(env)?;
     if now > proposal.created_at + policy.editing_period {
         return Err(Error::NotInEditingPhase);
     }

@@ -621,7 +621,6 @@ fn removed_token_balance_reporting() {
     // get_treasury_balance_in_asset reports the token balance accurately
     assert_eq!(s.client.get_treasury_balance_in_asset(&other_token), 0);
 }
-}
 
 #[test]
 fn pending_token_additions_remain_indexed_until_execution() {

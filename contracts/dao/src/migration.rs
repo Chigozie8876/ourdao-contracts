@@ -113,7 +113,7 @@ pub fn seed_pending_yield(
     require_seeding_open(env)?;
     storage::extend_instance(env);
 
-    let base_asset = storage::get_token(env);
+    let base_asset = storage::get_token(env)?;
     for entry in yields.iter() {
         storage::set_yield_snapshot(
             env,
@@ -142,7 +142,7 @@ pub fn seed_loans(env: &Env, caller: soroban_sdk::Address, loans: Vec<Loan>) -> 
         storage::set_loan(env, &loan);
         storage::adjust_outstanding_principal(
             env,
-            &storage::get_loan_asset(env, loan.id),
+            &storage::get_loan_asset(env, loan.id)?,
             crate::loans::principal_outstanding(&loan) - before,
         );
         // Ensure the next-id counter won't reuse this id.

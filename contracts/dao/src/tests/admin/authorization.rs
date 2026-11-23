@@ -398,3 +398,4 @@ fn pause_blocks_all_mutating_entrypoints_except_repay() {
 
     s.client.unpause(&s.admin);
     assert!(!s.client.is_paused());
+}

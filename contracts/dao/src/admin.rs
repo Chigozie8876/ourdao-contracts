@@ -113,8 +113,6 @@ pub fn initialize(
 pub fn add_admin(env: &Env, caller: Address, admin: Address) -> Result<(), Error> {
     util::require_admin(env, &caller)?;
     let mut admins = storage::get_admins(env)?;
-    if admins.iter().any(|a| a == admin) {
-    let mut admins = storage::get_admins(env);
     if admins.contains(&admin) {
         return Err(Error::AlreadyAdmin);
     }
@@ -131,11 +129,10 @@ pub fn add_admin(env: &Env, caller: Address, admin: Address) -> Result<(), Error
 #[allow(deprecated)]
 pub fn remove_admin(env: &Env, caller: Address, admin: Address) -> Result<(), Error> {
     util::require_admin(env, &caller)?;
-    let admins = storage::get_admins(env)?;
     // Require the admin being removed to co-sign their own removal, so a single
     // compromised key cannot silently purge all other admins (#67).
     admin.require_auth();
-    let mut admins = storage::get_admins(env);
+    let mut admins = storage::get_admins(env)?;
     if admins.len() <= 1 {
         return Err(Error::CannotRemoveLastAdmin);
     }
@@ -179,7 +176,7 @@ pub fn set_consensus_threshold(env: &Env, caller: Address, threshold: u32) -> Re
     if threshold == 0 || threshold as i128 > BASIS_POINTS {
         return Err(Error::InvalidThreshold);
     }
-    let old_threshold = storage::get_threshold(env);
+    let old_threshold = storage::get_threshold(env)?;
     storage::set_threshold(env, threshold);
     extend_instance(env);
     env.events()
@@ -222,7 +219,7 @@ pub fn execute_policy_update(env: &Env, caller: Address) -> Result<(), Error> {
     if now < update.execution_time {
         return Err(Error::TimelockNotExpired);
     }
-    let old_policy = storage::get_policy(env);
+    let old_policy = storage::get_policy(env)?;
     storage::set_policy(env, &update.policy);
     storage::remove_pending_policy_update(env);
     extend_instance(env);
@@ -337,7 +334,7 @@ pub fn execute_token_addition(env: &Env, caller: Address, token: Address) -> Res
 pub fn remove_token(env: &Env, caller: Address, token: Address) -> Result<(), Error> {
     util::require_initialized(env)?;
     util::require_admin(env, &caller)?;
-    if token == storage::get_token(env) {
+    if token == storage::get_token(env)? {
         return Err(Error::CannotRemoveBaseToken);
     }
     if !storage::is_token_whitelisted(env, &token) {

@@ -493,7 +493,6 @@ fn calculate_exit_share_for_unregistered_address() {
     // calculate_exit_share returns 0 without erroring or trapping
     assert_eq!(s.client.calculate_exit_share(&unknown), 0);
 }
-}
 
 
 // Issue #280: membership contribution always uses the configured base token.

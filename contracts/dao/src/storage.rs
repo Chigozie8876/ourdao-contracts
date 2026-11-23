@@ -1,7 +1,6 @@
 use soroban_sdk::{contracttype, Address, BytesN, Env, IntoVal, String, Val, Vec};
 
 use crate::error::Error;
-use crate::types::{Loan, LoanPolicy, LoanProposal, Member, TreasuryProposal};
 use crate::types::{Loan, LoanPolicy, LoanProposal, Member, PendingPolicyUpdate, TreasuryProposal};
 
 // Soroban produces one ledger every ~5 seconds.
@@ -126,15 +125,16 @@ pub fn is_initialized(env: &Env) -> bool {
 }
 
 pub fn get_admins(env: &Env) -> Result<Vec<Address>, Error> {
-    env.storage().instance().get(&DataKey::Admins).ok_or(Error::NotInitialized)
+    env.storage()
+        .instance()
+        .get(&DataKey::Admins)
+        .ok_or(Error::NotInitialized)
 }
 
 pub fn set_admins(env: &Env, admins: &Vec<Address>) {
     env.storage().instance().set(&DataKey::Admins, admins);
 }
 
-pub fn get_threshold(env: &Env) -> Result<u32, Error> {
-    env.storage().instance().get(&DataKey::Threshold).ok_or(Error::NotInitialized)
 pub fn get_pauser(env: &Env) -> Option<Address> {
     env.storage().instance().get(&DataKey::Pauser)
 }
@@ -147,8 +147,11 @@ pub fn remove_pauser(env: &Env) {
     env.storage().instance().remove(&DataKey::Pauser);
 }
 
-pub fn get_threshold(env: &Env) -> u32 {
-    env.storage().instance().get(&DataKey::Threshold).unwrap()
+pub fn get_threshold(env: &Env) -> Result<u32, Error> {
+    env.storage()
+        .instance()
+        .get(&DataKey::Threshold)
+        .ok_or(Error::NotInitialized)
 }
 
 pub fn set_threshold(env: &Env, t: u32) {
@@ -167,7 +170,10 @@ pub fn set_membership_fee(env: &Env, fee: i128) {
 }
 
 pub fn get_token(env: &Env) -> Result<Address, Error> {
-    env.storage().instance().get(&DataKey::Token).ok_or(Error::NotInitialized)
+    env.storage()
+        .instance()
+        .get(&DataKey::Token)
+        .ok_or(Error::NotInitialized)
 }
 
 pub fn set_token(env: &Env, token: &Address) {
@@ -175,7 +181,10 @@ pub fn set_token(env: &Env, token: &Address) {
 }
 
 pub fn get_policy(env: &Env) -> Result<LoanPolicy, Error> {
-    env.storage().instance().get(&DataKey::Policy).ok_or(Error::NotInitialized)
+    env.storage()
+        .instance()
+        .get(&DataKey::Policy)
+        .ok_or(Error::NotInitialized)
 }
 
 pub fn set_policy(env: &Env, policy: &LoanPolicy) {
@@ -449,7 +458,7 @@ pub fn get_yield_accumulator(env: &Env, asset: &Address) -> i128 {
     if let Some(value) = env.storage().instance().get(&key) {
         extend_instance(env);
         value
-    } else if asset == &get_token(env) {
+    } else if get_token(env).is_ok_and(|token| &token == asset) {
         let legacy_value = env
             .storage()
             .instance()
@@ -475,7 +484,7 @@ pub fn get_yield_snapshot(env: &Env, addr: &Address, asset: &Address) -> i128 {
     if let Some(value) = env.storage().persistent().get(&key) {
         extend_persistent(env, &key);
         value
-    } else if asset == &get_token(env) {
+    } else if get_token(env).is_ok_and(|token| &token == asset) {
         let legacy_key = DataKey::MemberYieldSnapshot(addr.clone());
         match env.storage().persistent().get(&legacy_key) {
             Some(value) => {
@@ -565,7 +574,7 @@ pub fn get_yield_remainder(env: &Env, asset: &Address) -> i128 {
     if let Some(value) = env.storage().persistent().get(&key) {
         extend_persistent(env, &key);
         value
-    } else if asset == &get_token(env) {
+    } else if get_token(env).is_ok_and(|token| &token == asset) {
         let legacy_key = DataKey::YieldRemainder;
         match env.storage().persistent().get(&legacy_key) {
             Some(value) => {
@@ -747,12 +756,12 @@ pub fn remove_pending_token_addition(env: &Env, token: &Address) {
 }
 
 /// Asset of loan proposal / loan `id`; the base token unless recorded.
-pub fn get_loan_asset(env: &Env, id: u32) -> Address {
+pub fn get_loan_asset(env: &Env, id: u32) -> Result<Address, Error> {
     let key = DataKey::LoanAsset(id);
     match env.storage().persistent().get(&key) {
         Some(asset) => {
             extend_persistent(env, &key);
-            asset
+            Ok(asset)
         }
         None => get_token(env),
     }
@@ -765,12 +774,12 @@ pub fn set_loan_asset(env: &Env, id: u32, asset: &Address) {
 }
 
 /// Asset of treasury proposal `id`; the base token unless recorded.
-pub fn get_treasury_asset(env: &Env, id: u32) -> Address {
+pub fn get_treasury_asset(env: &Env, id: u32) -> Result<Address, Error> {
     let key = DataKey::TreasuryAsset(id);
     match env.storage().persistent().get(&key) {
         Some(asset) => {
             extend_persistent(env, &key);
-            asset
+            Ok(asset)
         }
         None => get_token(env),
     }

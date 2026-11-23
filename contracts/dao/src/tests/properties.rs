@@ -3,6 +3,7 @@ use soroban_sdk::testutils::Address as _;
 use soroban_sdk::{token, Address, Env, Vec};
 
 use super::common::*;
+use crate::types::MemberStatus;
 use crate::util::{MAX_STAKE_BONUS, STAKE_WEIGHT_UNIT};
 use crate::{OurDao, OurDaoClient};
 
@@ -341,14 +342,16 @@ proptest! {
                 prop_assert_eq!(s.client.get_active_members(), 1);
                 prop_assert_eq!(s.client.get_total_members(), 1);
 
-                s.env.as_contract(&s.client.address, || {
-                    let record = crate::storage::get_member(&s.env, &member).unwrap();
-                    prop_assert_eq!(record.status, MemberStatus::ActiveMember);
+                let status = s.env.as_contract(&s.client.address, || {
+                    crate::storage::get_member(&s.env, &member).unwrap().status
                 });
+                prop_assert_eq!(status, MemberStatus::ActiveMember);
             }
         }
 
-        s.env.as_contract(&s.client.address, || {
+        // prop_assert_eq! returns early, so the counts leave the closure
+        // and are asserted outside it.
+        let (total, active, record_count, active_count) = s.env.as_contract(&s.client.address, || {
             let addresses = crate::storage::get_members(&s.env);
             let mut active_count = 0u32;
             let mut record_count = 0u32;
@@ -364,14 +367,14 @@ proptest! {
                 }
             }
 
-            prop_assert_eq!(
+            (
                 crate::storage::get_total_members(&s.env),
-                record_count
-            );
-            prop_assert_eq!(
                 crate::storage::get_active_members(&s.env),
-                active_count
-            );
+                record_count,
+                active_count,
+            )
         });
+        prop_assert_eq!(total, record_count);
+        prop_assert_eq!(active, active_count);
     }
 }

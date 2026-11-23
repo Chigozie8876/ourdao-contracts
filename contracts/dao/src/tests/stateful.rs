@@ -1,3 +1,5 @@
+extern crate std;
+
 use proptest::prelude::*;
 use soroban_sdk::testutils::{Address as _, Ledger as _};
 use soroban_sdk::{Address, String};
@@ -22,7 +24,7 @@ enum Action {
 }
 
 fn action() -> impl Strategy<Value = Action> {
-    prop::sample::select(vec![
+    prop::sample::select(std::vec![
         Action::Join,
         Action::Exit,
         Action::Stake,

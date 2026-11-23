@@ -150,7 +150,7 @@ fn second_asset_interest_claim_and_exit_stay_in_that_asset() {
 fn legacy_base_yield_values_remain_claimable_after_storage_migration() {
     let s = setup(1);
     let member = s.members.get(0).unwrap();
-    let base_asset = s.client.get_token().unwrap();
+    let base_asset = s.client.get_token();
 
     s.env.as_contract(&s.client.address, || {
         s.env
@@ -450,7 +450,7 @@ fn delegation_state_across_exit_and_rejoin() {
     s.client.exit_dao(&a);
 
     // Rejoin
-    s.token.mint(&a, &FEE);
+    mint_asset(&s, &s.token.address, &a, FEE);
     s.client.register_member(&a);
 
     // Check delegate status after rejoin

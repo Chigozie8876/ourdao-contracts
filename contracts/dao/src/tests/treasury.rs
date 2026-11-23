@@ -533,6 +533,8 @@ fn seeded_loans_count_towards_outstanding_principal() {
         due_time: now + LOAN_DURATION,
         status: LoanStatus::Active,
         amount_repaid: 100,
+        default_grace_period: 0,
+        default_penalty_bps: 0,
     };
     let mut batch = Vec::new(&s.env);
     batch.push_back(active.clone());

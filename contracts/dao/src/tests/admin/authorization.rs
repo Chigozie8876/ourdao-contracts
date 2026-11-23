@@ -1,5 +1,7 @@
 #![allow(unused_imports)]
 
+extern crate std;
+
 use soroban_sdk::testutils::Address as _;
 use soroban_sdk::{Address, Bytes, BytesN, Env, String, Symbol, Vec};
 
@@ -186,7 +188,7 @@ fn pause_blocks_all_mutating_entrypoints_except_repay() {
         EntryPoint {
             name: "request_loan",
             blocked: matches!(
-                s.client.try_request_loan(&borrower, &100),
+                s.client.try_request_loan(&borrower, &100, &None),
                 Err(Ok(Error::Paused))
             ),
         },

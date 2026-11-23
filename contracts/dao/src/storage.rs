@@ -494,7 +494,12 @@ pub fn set_yield_snapshot(env: &Env, addr: &Address, asset: &Address, value: i12
 // ---------- native-swap module accessors ----------
 
 pub fn get_doc(env: &Env, kind: ProposalKind, id: u32) -> Option<soroban_sdk::Bytes> {
-    env.storage().persistent().get(&DataKey::Doc(kind, id))
+    let key = DataKey::Doc(kind, id);
+    let v = env.storage().persistent().get(&key);
+    if v.is_some() {
+        extend_persistent(env, &key);
+    }
+    v
 }
 
 pub fn set_doc(env: &Env, kind: ProposalKind, id: u32, hash: &soroban_sdk::Bytes) {
@@ -504,7 +509,12 @@ pub fn set_doc(env: &Env, kind: ProposalKind, id: u32, hash: &soroban_sdk::Bytes
 }
 
 pub fn get_name_owner(env: &Env, name: &String) -> Option<Address> {
-    env.storage().persistent().get(&DataKey::Name(name.clone()))
+    let key = DataKey::Name(name.clone());
+    let v = env.storage().persistent().get(&key);
+    if v.is_some() {
+        extend_persistent(env, &key);
+    }
+    v
 }
 
 pub fn set_name(env: &Env, name: &String, owner: &Address) {
@@ -517,15 +527,21 @@ pub fn set_name(env: &Env, name: &String, owner: &Address) {
 }
 
 pub fn get_name_of(env: &Env, owner: &Address) -> Option<String> {
-    env.storage()
-        .persistent()
-        .get(&DataKey::NameOf(owner.clone()))
+    let key = DataKey::NameOf(owner.clone());
+    let v = env.storage().persistent().get(&key);
+    if v.is_some() {
+        extend_persistent(env, &key);
+    }
+    v
 }
 
 pub fn get_commit(env: &Env, id: u32, voter: &Address) -> Option<BytesN<32>> {
-    env.storage()
-        .persistent()
-        .get(&DataKey::Commit(id, voter.clone()))
+    let key = DataKey::Commit(id, voter.clone());
+    let v = env.storage().persistent().get(&key);
+    if v.is_some() {
+        extend_persistent(env, &key);
+    }
+    v
 }
 
 pub fn set_commit(env: &Env, id: u32, voter: &Address, commitment: &BytesN<32>) {

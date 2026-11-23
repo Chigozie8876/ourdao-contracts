@@ -1,5 +1,8 @@
 use soroban_sdk::{symbol_short, token, Address, Env, Vec};
 
+/// Maximum number of admins to keep the admin-list bounded in instance storage (#68).
+pub const MAX_ADMINS: u32 = 20;
+
 use crate::error::Error;
 use crate::storage::{self, extend_instance};
 use crate::types::{LoanPolicy, PendingPolicyUpdate, BASIS_POINTS};
@@ -69,6 +72,14 @@ pub fn initialize(
     if admins.is_empty() {
         return Err(Error::NotAuthorized);
     }
+    if admins.len() > MAX_ADMINS {
+        return Err(Error::TooManyAdmins);
+    }
+    // Require every initial admin to authorize the initialization, preventing
+    // front-running: a stranger cannot supply their own admins vector (#66).
+    for a in admins.iter() {
+        a.require_auth();
+    }
     // Admins must be unique: `remove_admin` relies on it, and duplicates once
     // let it leave the contract with zero admins (#42). `first_index_of` is a
     // single host call per admin, so this check stays linear.
@@ -105,6 +116,9 @@ pub fn add_admin(env: &Env, caller: Address, admin: Address) -> Result<(), Error
     if admins.contains(&admin) {
         return Err(Error::AlreadyAdmin);
     }
+    if admins.len() >= MAX_ADMINS {
+        return Err(Error::TooManyAdmins);
+    }
     admins.push_back(admin.clone());
     storage::set_admins(env, &admins);
     extend_instance(env);
@@ -115,6 +129,9 @@ pub fn add_admin(env: &Env, caller: Address, admin: Address) -> Result<(), Error
 #[allow(deprecated)]
 pub fn remove_admin(env: &Env, caller: Address, admin: Address) -> Result<(), Error> {
     util::require_admin(env, &caller)?;
+    // Require the admin being removed to co-sign their own removal, so a single
+    // compromised key cannot silently purge all other admins (#67).
+    admin.require_auth();
     let mut admins = storage::get_admins(env);
     if admins.len() <= 1 {
         return Err(Error::CannotRemoveLastAdmin);
@@ -331,23 +348,5 @@ pub fn remove_token(env: &Env, caller: Address, token: Address) -> Result<(), Er
     env.events()
         .publish((symbol_short!("tok_rem"),), (caller, token));
     Ok(())
-
-/// Try to execute a pending policy update, if the timelock has expired and the
-/// caller is an admin. Returns `TimelockNotExpired` if the timelock has not yet
-/// elapsed, and `NoPendingPolicy` if there is no pending update.
-#[allow(deprecated)]
-pub fn try_execute_policy_update(env: &Env, caller: Address) -> Result<(), Error> {
-    util::require_admin(env, &caller)?;
-    let pending = storage::get_pending_policy_update(env).ok_or(Error::NoPendingPolicy)?;
-    if env.ledger().timestamp() < pending.execution_time {
-        return Err(Error::TimelockNotExpired);
-    }
-    // Clear the pending update before applying it, in case execution fails
-    storage::remove_pending_policy_update(env);
-    storage::set_policy(env, &caller, pending.policy)?;
-    extend_instance(env);
-    env.events().publish((symbol_short!(\"policy\"),), (pending.policy, pending.policy));
-    Ok(())
 }
 
-}

@@ -110,7 +110,7 @@ pub fn extend_instance(env: &Env) {
 
 fn extend_persistent<K>(env: &Env, key: &K)
 where
-    K: IntoVal<Env, Val> + ?Sized,
+    K: IntoVal<Env, Val> + Sized,
 {
     env.storage()
         .persistent()

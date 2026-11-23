@@ -24,6 +24,9 @@ pub fn max_loan_for(policy: &LoanPolicy, treasury: i128) -> i128 {
 
 /// Quote the terms a loan of `amount` would carry right now. Interest scales
 /// linearly with the loan's size relative to the treasury, clamped to policy.
+pub fn calculate_loan_terms(env: &Env, amount: i128) -> Result<LoanTerms, Error> {
+    let policy = storage::get_policy(env)?;
+    let treasury = util::treasury_balance(env);
 ///
 /// This always returns a rate, even for a loan that cannot be issued: when
 /// the treasury is empty or negative the rate is the policy maximum, and an
@@ -48,6 +51,16 @@ fn quote_terms(env: &Env, amount: i128, treasury: i128) -> LoanTerms {
         BASIS_POINTS
     };
     let spread = (policy.max_interest_rate - policy.min_interest_rate) as i128;
+    let mut rate = policy.min_interest_rate as i128 + (loan_ratio * spread / BASIS_POINTS);
+    if rate > policy.max_interest_rate as i128 {
+        rate = policy.max_interest_rate as i128;
+    }
+    let total_repayment = amount + (amount * rate / BASIS_POINTS);
+    Ok(LoanTerms {
+        interest_rate: rate as u32,
+        total_repayment,
+        duration: policy.max_loan_duration,
+    })
     let added_rate = loan_ratio
         .checked_mul(spread)
         .map(|v| util::ceil_div_nonnegative(v, BASIS_POINTS))
@@ -85,7 +98,7 @@ pub fn is_eligible_for_loan(env: &Env, member: &Address) -> Result<(), Error> {
     if record.has_active_loan {
         return Err(Error::HasActiveLoan);
     }
-    let policy = storage::get_policy(env);
+    let policy = storage::get_policy(env)?;
     let now = env.ledger().timestamp();
     if now.saturating_sub(record.join_time) < policy.min_membership_duration {
         return Err(Error::NotEligibleForLoan);
@@ -145,6 +158,9 @@ pub fn request_loan_in_asset(
         return Err(Error::TooManyOpenProposals);
     }
 
+    let policy = storage::get_policy(env)?;
+    let treasury = util::treasury_balance(env);
+    let max_loan = treasury * policy.max_loan_to_treasury_ratio as i128 / BASIS_POINTS;
     let policy = storage::get_policy(env);
     let treasury = util::treasury_balance_in_asset(env, &asset);
     // Same cap the quote reports as `max_loan` (#80).
@@ -153,6 +169,7 @@ pub fn request_loan_in_asset(
         return Err(Error::ExceedsTreasuryRatio);
     }
 
+    let terms = calculate_loan_terms(env, amount)?;
     let terms = quote_terms(env, amount, treasury);
     let now = env.ledger().timestamp();
     let id = storage::next_id(env, storage::DataKey::NextProposalId);
@@ -360,6 +377,13 @@ fn vote_on_loan_proposal_internal(
         proposal.against_votes += weight;
     }
     proposal.votes_cast += 1;
+    storage::set_loan_voted(env, proposal_id, &voter);
+    env.events()
+        .publish((symbol_short!("loan_vote"),), (proposal_id, voter, support));
+
+    let required = util::required_votes(
+        storage::get_active_members(env),
+        storage::get_threshold(env)?,
     storage::set_loan_voted(env, proposal_id, voter);
     env.events().publish(
         (symbol_short!("loan_vote"),),
@@ -495,6 +519,7 @@ fn approve_and_disburse(env: &Env, proposal: &LoanProposal) -> Result<(), Error>
     borrower.active_loans += 1;
     storage::set_member(env, &borrower);
 
+    util::token_client(env)?.transfer(
     util::token_client_for(env, &asset).transfer(
         &util::contract_address(env),
         &proposal.borrower,
@@ -635,6 +660,7 @@ fn repay_loan_internal(
         return Err(Error::InvalidAmount);
     }
 
+    util::token_client(env)?.transfer(&borrower, &util::contract_address(env), &amount);
     let asset = storage::get_loan_asset(env, loan_id);
 
     // Interest-first split: how much of the loan's total interest was
@@ -735,6 +761,7 @@ pub fn mark_loan_defaulted(env: &Env, loan_id: u32) -> Result<(), Error> {
         return Err(Error::LoanNotActive);
     }
 
+    let policy = storage::get_policy(env)?;
     let now = env.ledger().timestamp();
     if now < loan.due_time + loan.default_grace_period {
         return Err(Error::LoanNotOverdue);

@@ -70,6 +70,8 @@ pub fn propose_withdrawal_in_asset(
         for_votes: 0,
         against_votes: 0,
         votes_cast: 0,
+        voting_period: storage::get_policy(env)?.voting_period,
+        treasury_threshold: storage::get_policy(env)?.treasury_threshold,
         voting_period: policy.voting_period,
         treasury_threshold: policy.treasury_threshold,
         private,
@@ -223,6 +225,7 @@ fn execute(env: &Env, proposal: &mut TreasuryProposal) -> Result<(), Error> {
         return Err(Error::InsufficientTreasury);
     }
     proposal.status = ProposalStatus::Executed;
+    util::token_client(env)?.transfer(
     // Commit the effect before interacting with the external asset contract.
     storage::set_treasury_proposal(env, proposal);
     util::token_client_for(env, &asset).transfer(

@@ -24,7 +24,7 @@ pub fn register_member(env: &Env, member: Address) -> Result<(), Error> {
         }
     }
 
-    let fee = storage::get_membership_fee(env);
+    let fee = storage::get_membership_fee(env)?;
 
     let is_returning = existing.is_some();
     // Preserve the member's lifetime loan counters across an exit/rejoin so the
@@ -65,6 +65,7 @@ pub fn register_member(env: &Env, member: Address) -> Result<(), Error> {
 
     // Interaction last (checks-effects-interactions): the fee transfer only
     // happens once every state transition above has completed.
+    util::token_client(env)?.transfer(&member, &util::contract_address(env), &fee);
     util::token_client(env).transfer(&member, util::contract_address(env), &fee);
 
     env.events()
@@ -85,6 +86,10 @@ pub fn exit_dao(env: &Env, member: Address) -> Result<(), Error> {
     let stake = storage::get_stake(env, &member);
     let base_asset = storage::get_token(env);
     let pending = compute_pending_yield(env, &member);
+    let payout = share + stake + pending;
+
+    if payout > 0 {
+        util::token_client(env)?.transfer(&util::contract_address(env), &member, &payout);
     let assets = storage::get_yield_assets(env);
     let mut payouts = Vec::new(env);
     let base_share_and_stake = share
@@ -196,6 +201,12 @@ fn claim_rewards_in_asset_internal(
     if pending <= 0 {
         return Err(Error::NothingToClaim);
     }
+    // Settle: advance snapshot to current accumulator.
+    let acc = storage::get_yield_accumulator(env);
+    storage::set_yield_snapshot(env, &member, acc);
+    util::token_client(env)?.transfer(&util::contract_address(env), &member, &pending);
+    env.events()
+        .publish((symbol_short!("claimed"),), (member, pending));
     // Settle only this asset so claims cannot consume another token's yield.
     let acc = storage::get_yield_accumulator(env, &asset);
     storage::set_yield_snapshot(env, &member, &asset, acc);

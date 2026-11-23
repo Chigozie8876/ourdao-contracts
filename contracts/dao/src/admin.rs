@@ -112,6 +112,8 @@ pub fn initialize(
 #[allow(deprecated)]
 pub fn add_admin(env: &Env, caller: Address, admin: Address) -> Result<(), Error> {
     util::require_admin(env, &caller)?;
+    let mut admins = storage::get_admins(env)?;
+    if admins.iter().any(|a| a == admin) {
     let mut admins = storage::get_admins(env);
     if admins.contains(&admin) {
         return Err(Error::AlreadyAdmin);
@@ -129,6 +131,7 @@ pub fn add_admin(env: &Env, caller: Address, admin: Address) -> Result<(), Error
 #[allow(deprecated)]
 pub fn remove_admin(env: &Env, caller: Address, admin: Address) -> Result<(), Error> {
     util::require_admin(env, &caller)?;
+    let admins = storage::get_admins(env)?;
     // Require the admin being removed to co-sign their own removal, so a single
     // compromised key cannot silently purge all other admins (#67).
     admin.require_auth();

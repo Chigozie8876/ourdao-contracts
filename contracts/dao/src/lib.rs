@@ -457,6 +457,11 @@ impl OurDao {
     }
 
     pub fn get_loan_policy(env: Env) -> Result<LoanPolicy, Error> {
+        storage::get_policy(&env)
+    }
+
+    pub fn get_admins(env: Env) -> Result<Vec<Address>, Error> {
+        storage::get_admins(&env)
         util::require_initialized(&env)?;
         Ok(storage::get_policy(&env))
     }
@@ -522,6 +527,11 @@ impl OurDao {
     }
 
     pub fn get_consensus_threshold(env: Env) -> Result<u32, Error> {
+        storage::get_threshold(&env)
+    }
+
+    pub fn get_token(env: Env) -> Result<Address, Error> {
+        storage::get_token(&env)
         util::require_initialized(&env)?;
         Ok(storage::get_threshold(&env))
     }
@@ -666,6 +676,8 @@ impl OurDao {
         }
     }
 
+    pub fn calculate_loan_terms(env: Env, amount: i128) -> Result<LoanTerms, Error> {
+        loans::calculate_loan_terms(&env, amount)
     /// Quotes the terms a loan of `amount` would carry right now. The quote
     /// can only be honoured when `amount <= max_loan`: with an empty or
     /// negative treasury `max_loan` is 0 and the rate shown is the policy

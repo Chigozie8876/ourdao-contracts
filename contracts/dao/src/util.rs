@@ -15,8 +15,8 @@ pub const MAX_STAKE_BONUS: i128 = 5;
 /// The unconditional vote every active member gets, before any stake boost.
 pub const BASE_VOTE_WEIGHT: i128 = 1;
 
-pub fn token_client(env: &Env) -> token::Client<'_> {
-    token::Client::new(env, &storage::get_token(env))
+pub fn token_client(env: &Env) -> Result<token::Client<'_>, crate::error::Error> {
+    Ok(token::Client::new(env, &storage::get_token(env)?))
 }
 
 /// Token client for any asset, e.g. a whitelisted non-base asset (#236).
@@ -31,6 +31,8 @@ pub fn contract_address(env: &Env) -> Address {
 /// Treasury == the DAO's own token balance minus funds earmarked as stake,
 /// so staked principal is never lent out or counted as distributable equity.
 pub fn treasury_balance(env: &Env) -> i128 {
+    let bal = token_client(env).map(|c| c.balance(&contract_address(env))).unwrap_or(0);
+    bal - storage::get_total_staked(env)
     treasury_balance_in_asset(env, &storage::get_token(env))
 }
 
@@ -72,6 +74,7 @@ pub fn require_not_paused(env: &Env) -> Result<(), Error> {
 }
 
 pub fn is_admin(env: &Env, who: &Address) -> bool {
+    storage::get_admins(env).map(|a| a.iter().any(|a| &a == who)).unwrap_or(false)
     storage::get_admins(env).contains(who)
 }
 

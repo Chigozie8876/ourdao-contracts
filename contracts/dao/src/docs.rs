@@ -28,6 +28,10 @@ fn proposal_owner(env: &Env, kind: &ProposalKind, id: u32) -> Option<Address> {
     }
 }
 
+// `env.events().publish` is deprecated in soroban-sdk in favour of
+// `#[contractevent]`, but migration is a coordinated, breaking wire-format
+// change (#85).  Suppress per-function so unrelated deprecations still surface.
+#[allow(deprecated)]
 pub fn attach_document(
     env: &Env,
     caller: Address,
@@ -53,17 +57,22 @@ pub fn attach_document(
     if let ProposalKind::Loan = kind {
         if let Some(p) = storage::get_loan_proposal(env, proposal_id) {
             if p.phase != ProposalPhase::Editing {
-                return Err(Error::NotEditingPhase);
+                return Err(Error::NotInEditingPhase);
             }
         }
     }
-    
+
     storage::set_doc(env, kind, proposal_id, &content_hash);
     env.events()
         .publish((symbol_short!("doc_attn"),), (kind, proposal_id, caller));
     Ok(())
 }
 
-pub fn get_document(env: &Env, kind: ProposalKind, proposal_id: u32) -> Option<Bytes> {
-    storage::get_doc(env, kind, proposal_id)
+pub fn get_document(
+    env: &Env,
+    kind: ProposalKind,
+    proposal_id: u32,
+) -> Result<Option<Bytes>, Error> {
+    util::require_initialized(env)?;
+    Ok(storage::get_doc(env, kind, proposal_id))
 }

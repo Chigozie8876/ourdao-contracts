@@ -1,4 +1,4 @@
-use soroban_sdk::{contracttype, Address, String};
+use soroban_sdk::{contracttype, Address, Bytes, String, Vec};
 
 /// Basis-points denominator (100% == 10_000).
 pub const BASIS_POINTS: i128 = 10_000;
@@ -24,6 +24,7 @@ pub enum ProposalStatus {
     Rejected,
     Executed,
     Expired,
+    Cancelled,
 }
 
 #[contracttype]
@@ -53,6 +54,51 @@ pub struct Member {
     pub share_balance: i128,
     pub has_active_loan: bool,
     pub last_loan_time: u64,
+    /// Lifetime count of loans disbursed to this member.
+    pub total_loans: u32,
+    /// Lifetime count of this member's loans that reached full repayment.
+    pub repaid_loans: u32,
+    /// Loans currently outstanding (disbursed and not yet repaid or defaulted).
+    pub active_loans: u32,
+}
+
+/// Everything the DAO knows about one member, returned by
+/// `get_member_overview` in a single call.
+///
+/// Convenience aggregation view combining independently queryable fields:
+/// - `member`: general member status and metadata
+/// - `stake`: matches `get_stake`
+/// - `pending_yield`: matches `get_pending_yield`
+/// - `loan_stats`: matches `get_member_loan_stats`
+/// - `name`: matches `name_of`
+/// - `delegate`: matches `get_delegate`
+///
+/// Maintenance obligation: Every future addition to any of the underlying
+/// individual member views must have a matching field added here to ensure
+/// the aggregate view remains in sync.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MemberOverview {
+    pub member: Member,
+    /// Tokens the member has staked for a voting-weight bonus.
+    pub stake: i128,
+    /// Interest yield accrued and not yet claimed via `claim_rewards`.
+    pub pending_yield: i128,
+    pub loan_stats: MemberLoanStats,
+    /// Name registered to this address, if any.
+    pub name: Option<String>,
+    /// Address this member delegated their vote to, if any.
+    pub delegate: Option<Address>,
+}
+
+/// On-chain credit track record for a member. Returned by
+/// `get_member_loan_stats` as an O(1) read of the member record.
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MemberLoanStats {
+    pub total_loans: u32,
+    pub repaid_loans: u32,
+    pub active_loans: u32,
 }
 
 /// Tunable lending parameters. Durations are in ledger seconds; rates in bps.
@@ -68,11 +114,12 @@ pub struct LoanPolicy {
     pub max_loan_to_treasury_ratio: u32,
     /// Extra time past `Loan.due_time` before a loan becomes markable as defaulted.
     pub default_grace_period: u64,
-    /// Basis points of the defaulting borrower's `contribution` slashed on default.
+    /// Basis-points of the defaulting borrower's `contribution` slashed on default.
     pub default_penalty_bps: u32,
     pub editing_period: u64,
     pub voting_period: u64,
     pub treasury_threshold: u32,
+    pub quorum_bps: u32,
 }
 
 #[contracttype]
@@ -92,6 +139,13 @@ pub struct LoanProposal {
     pub against_votes: i128,
     pub votes_cast: u32,
     pub voting_period: u64,
+    pub metadata_cid: Option<String>,
+    /// Timestamp of the last `edit_loan_proposal` call (`None` if never edited).
+    pub last_edited_at: Option<u64>,
+    /// Active-member count when the proposal was created. Quorum and the
+    /// early-rejection bound are computed from this, not the live count, so
+    /// membership churn during the vote cannot move the bar (#73).
+    pub active_members: u32,
 }
 
 #[contracttype]
@@ -106,6 +160,13 @@ pub struct Loan {
     pub due_time: u64,
     pub status: LoanStatus,
     pub amount_repaid: i128,
+    /// `LoanPolicy.default_grace_period` in force when this loan was
+    /// disbursed. Default terms are part of the obligation the borrower
+    /// accepted, so a later policy change must not alter them (#70).
+    pub default_grace_period: u64,
+    /// `LoanPolicy.default_penalty_bps` in force when this loan was disbursed.
+    /// See `default_grace_period`.
+    pub default_penalty_bps: u32,
 }
 
 #[contracttype]
@@ -125,13 +186,138 @@ pub struct TreasuryProposal {
     pub treasury_threshold: u32,
     /// When true, votes must be committed then revealed (commit-reveal privacy).
     pub private: bool,
+    /// Active-member count when the proposal was created. See
+    /// `LoanProposal.active_members` (#73).
+    pub active_members: u32,
+}
+
+/// Spendable treasury balance in one whitelisted asset (#339).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AssetBalance {
+    pub asset: Address,
+    pub balance: i128,
+}
+
+/// Headline DAO state returned by `get_dao_summary` (#339).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DaoSummary {
+    pub total_members: u32,
+    pub active_members: u32,
+    /// Spendable treasury in the base token; same value as `get_treasury_balance`.
+    pub treasury_balance: i128,
+    /// Spendable treasury in every whitelisted asset, base token first.
+    pub treasury_balances: Vec<AssetBalance>,
+    pub total_staked: i128,
+    pub consensus_threshold: u32,
+    pub paused: bool,
+    pub version: String,
+}
+
+/// Per-asset reconciliation figures returned by `get_treasury_accounting`
+/// (#288), so auditors can compare what the contract accounts for against
+/// what it actually holds.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TreasuryAccounting {
+    /// The contract's actual balance of the asset, as reported by its token.
+    pub token_balance: i128,
+    /// Portion of `token_balance` held as member stake. Staking only happens
+    /// in the base token, so this is zero for every other asset.
+    pub staked: i128,
+    /// Principal still owed on `Active` loans in the asset. Lent out, so not
+    /// part of `token_balance`.
+    pub outstanding_principal: i128,
 }
 
 /// Computed loan terms returned by the read-only quote helper.
+///
+/// A quote is only honourable when `amount <= max_loan`. Above that,
+/// `request_loan` rejects the amount with `ExceedsTreasuryRatio`, and the
+/// rate shown is not one anyone can borrow at (#80).
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LoanTerms {
     pub interest_rate: u32,
     pub total_repayment: i128,
     pub duration: u64,
+    /// Largest principal `request_loan` would accept right now:
+    /// `treasury_balance × max_loan_to_treasury_ratio / 10_000`, or 0 when the
+    /// treasury is empty or negative (staked funds exceeding the token
+    /// balance).
+    pub max_loan: i128,
+}
+
+/// Structured event emitted when a borrower edits loan proposal terms.
+/// Captures prior and updated terms plus the edit timestamp.
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LoanTermsEdited {
+    pub proposal_id: u32,
+    pub borrower: Address,
+    pub prev_amount: i128,
+    pub prev_total_repayment: i128,
+    pub new_amount: i128,
+    pub total_repayment: i128,
+    pub edited_at: u64,
+}
+
+/// Pending policy update undergoing timelock delay (#192).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingPolicyUpdate {
+    pub policy: LoanPolicy,
+    pub proposed_at: u64,
+    pub execution_time: u64,
+}
+
+/// Structured event emitted upon staking reward claim (#193).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct StakingRewardClaimed {
+    pub member: Address,
+    pub amount: i128,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ProposalVote {
+    pub proposal_id: u32,
+    pub vote: bool,
+}
+
+// ── seed_state entry types (#332) ─────────────────────────────────────────────
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SeedStakeEntry {
+    pub address: Address,
+    pub amount: i128,
+}
+
+/// Pending yield for a member. `amount` is stored as the negative yield snapshot
+/// so the existing `get_pending_yield` formula `(accumulator - snapshot).max(0)`
+/// reconstructs the correct value from a fresh accumulator of 0 (#332).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SeedYieldEntry {
+    pub address: Address,
+    pub amount: i128,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SeedNameEntry {
+    pub name: String,
+    pub owner: Address,
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SeedDocEntry {
+    pub kind: crate::storage::ProposalKind,
+    pub proposal_id: u32,
+    pub content_hash: Bytes,
 }

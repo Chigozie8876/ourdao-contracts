@@ -30,11 +30,13 @@ This repository is one of three that make up OurDAO:
 - [Error codes](#error-codes)
 - [Build & test](#build--test)
 - [Deploy to testnet](#deploy-to-testnet)
+- [Operator scripts](#operator-scripts)
 - [Security notes](#security-notes)
 - [Known limitations](#known-limitations)
 - [Roadmap](#roadmap)
 - [Contributing](#contributing)
 - [License](#license)
+- [Resource costs](#resource-costs)
 
 ## What the DAO does
 
@@ -43,7 +45,26 @@ This repository is one of three that make up OurDAO:
 - **Lending** — members request loans that go through a fixed editable draft phase, then member voting weighted by stake-boosted voting power. On reaching the consensus threshold the loan is automatically approved and the principal disbursed from the treasury — no separate "execute" step. Interest is computed from a loan-size-relative-to-treasury curve, clamped to the policy's min/max rate. Repaying a loan returns the principal to the treasury and splits the interest across all active members as claimable yield.
 - **Loan defaults** — an overdue loan (past `due_time` plus a configurable grace period) can be marked defaulted by **anyone**, not just an admin — an on-chain keeper pattern. Defaulting slashes a policy-defined share of the borrower's treasury claim and frees their `has_active_loan` flag, so they can still exit the DAO with their reduced share or borrow again after the normal cooldown. This closes what was previously the DAO's most notable functional gap: prior to this, an overdue loan had zero on-chain consequence.
 - **Treasury** — any member can propose a withdrawal to any destination; execution requires a higher (60%) consensus than loan approval, reflecting the larger blast radius of moving treasury funds arbitrarily.
+- **Quorum is fixed when a proposal is created.** Loan and treasury proposals store the active-member count at creation (`active_members`), and both the approval bar (`ceil(active_members × threshold / 10_000)`) and the early-rejection bound are computed from it for the proposal's whole life. Members exiting mid-vote cannot lower the bar, and members joining mid-vote cannot raise it. The electorate is fixed too: a member who joined, or rejoined, after a proposal was created gets `JoinedAfterProposal` (93) if they try to vote, commit or reveal on it, because counting their vote against a bar that never included them would let new sign-ups decide it. They vote normally on proposals created after they joined. Membership is timestamped by ledger time, so a member who joins in the same ledger a proposal is created in is part of its electorate.
 - **Safety** — admin pause/unpause blocks all state-changing operations instantly (except loan repayments, which remain available to prevent forcing borrowers into default), and extensive view functions let any client inspect full DAO state without needing an indexer for real-time reads.
+
+### Yield and exit-share rules
+
+- **Yield is equal-split.** Interest repaid on a loan is divided equally among active members at the time of repayment (one member, one share), via an O(1) accumulator. Contribution size does not change a member's yield.
+- **Exit share is contribution-weighted.** On exit a member receives `treasury × their contribution ÷ total active contributions`. Yield rewards participation; the exit share returns capital.
+- **Defaulters.** When a loan is marked defaulted, the borrower's contribution is slashed by `default_penalty_bps` and they forfeit any yield accrued but unclaimed at that moment (it stays in the treasury). They remain active members and earn an equal share of interest repaid afterwards, until they exit.
+
+### Proposal end states
+
+| How it ended | `status` | `phase` | Event |
+|---|---|---|---|
+| Voting window closed without quorum | `Expired` | `Expired` | `loan_exp` |
+| Quorum became unreachable before the deadline | `Rejected` | `Expired` | `loan_rej` |
+| Cancelled by the borrower during editing | `Cancelled` | `Expired` | `prop_canc` |
+
+### Uninitialized contracts
+
+Every view that reads DAO configuration or the registry (`get_token`, `get_admins`, `is_admin`, `get_loan_policy`, `get_consensus_threshold`, `get_treasury_balance`, `calculate_loan_terms`, `calculate_exit_share`, `resolve_name`, `name_of`, `get_document`) returns `Error::NotInitialized` before `initialize` has run, instead of trapping or returning an ambiguous `None`. Call `is_initialized()` first to probe an unknown address. Per-record lookups such as `get_member` and `get_loan` still return `None` for a missing record.
 
 ## Additional feature modules
 
@@ -54,13 +75,22 @@ Four Soroban-native features beyond the core lending/treasury flow, each fully i
 | Name registry | On-chain **name registry** (name ⇄ address, 1:1) | `registry.rs` |
 | Content-hash metadata | Anchor an IPFS CID / digest to a loan or treasury proposal | `docs.rs` |
 | Commit-reveal voting | **Commit-reveal voting** for private treasury proposals (`sha256(support ++ salt)`, revealed later, tallied through the same code path as public votes) | `privacy.rs` |
-| Staking | **Staking** for a capped voting-weight boost (1 base vote + up to 5 bonus, 100 token units per bonus vote), tracked separately so staked funds are never lent out or counted as treasury | `staking.rs` |
+| Staking | **Staking** for a capped voting-weight boost (1 base vote + up to 5 bonus, on a quadratic curve: the *k*-th bonus vote costs `k² × 100` staked tokens), tracked separately so staked funds are never lent out or counted as treasury | `staking.rs` |
 
 ## Architecture & design decisions
 
 - **Single-contract design.** Every module (`admin`, `membership`, `loans`, `treasury`, `registry`, `docs`, `privacy`, `staking`) lives inside one `#[contract]` struct (`lib.rs`) rather than being split into separate deployed contracts. This keeps cross-module invariants (e.g. a member's `has_active_loan` flag, staked funds excluded from treasury balance) enforceable in normal Rust function calls instead of cross-contract calls.
 - **`loan.id == proposal.id`, always.** A loan proposal that gets approved disburses exactly one loan, so the loan reuses the proposal's own id rather than drawing from a separate counter. This was a deliberate fix (see the [`Known limitations`](#known-limitations) history below) — two independent counters looked harmless but silently diverged the moment any proposal was rejected, breaking the off-chain indexer's ability to correlate a loan back to the request that created it.
-- **Permissionless default-marking.** `mark_loan_defaulted` requires no admin authorization and no caller-side auth at all — it's a pure, objective, time-based state transition (like a keeper bot pattern), not a privileged action. Anyone can call it once the on-chain clock says a loan is overdue.
+- **Permissionless keeper calls.** Some entrypoints need no authorization from anyone, member or not, because they only carry out an outcome that is already fixed on-chain. The caller picks nothing but *when*:
+
+  | Entrypoint | Callable once | Fixed on-chain, caller cannot change | Repeat calls |
+  |---|---|---|---|
+  | `mark_loan_defaulted` | `due_time` + grace period has passed | borrower, penalty | rejected (`LoanNotActive`) |
+  | `disburse_approved_loan` | the loan vote passed and the treasury can cover it | borrower, principal | rejected (`NotInVotingPhase`) |
+  | `execute_treasury_proposal` | the withdrawal vote passed and the treasury can cover it | destination, amount | rejected (`NotInVotingPhase`) |
+  | `expire_loan_proposal` | the voting window closed without quorum | — | no-op |
+
+  The caller pays the transaction fee and receives nothing, so there is no incentive to grief; restricting these to admins would only add liveness risk, letting one absent party block an outcome the DAO already reached. Tests drive `disburse_approved_loan` and `execute_treasury_proposal` from a non-member with no auth at all, so adding a `require_auth` to either fails CI. Anyone running a keeper bot can watch for `loan_wait` / `tre_wait` events and retry once the treasury is refilled.
 - **Commit-reveal privacy shares the public tally path.** Rather than duplicating vote-counting logic for private proposals, `privacy::reveal_vote` recomputes and checks the commitment, then hands off to the *same* `treasury::tally` function public votes use — one code path, no risk of the two diverging.
 - **TTL-aware storage.** All persistent storage entries (members, loans, proposals, votes, stakes, documents) extend their time-to-live on every read/write (30-day bump for instance storage, 90-day for persistent), so active DAO data doesn't silently expire under Soroban's [state archival](https://developers.stellar.org/docs/learn/encyclopedia/storage/state-archival) model.
 - **Stable, append-only error codes.** `error.rs`'s numeric codes are documented as part of the contract's public ABI — new failure modes get a new number rather than renumbering existing ones, so client code that matches on error codes doesn't silently break across contract upgrades (see [Known limitations](#known-limitations) — there is currently no upgrade path at all, which makes this moot today but is kept as forward-looking discipline).
@@ -83,9 +113,11 @@ contracts/dao/
     types.rs       # data model + constants
     error.rs       # contract error codes
     util.rs        # token client, auth guards, vote math
-    test.rs        # full test suite (19 tests)
+    tests/         # test suite, one module per contract module (`cargo test`)
   scripts/
-    deploy-testnet.sh   # funds a deployer identity, builds, deploys, prints an initialize command
+    deploy-testnet.sh   # builds, deploys AND initializes; --dry-run, guarded against non-testnet
+    export-state.sh     # dumps a deployed DAO's live state to JSON via read-only views
+    keeper.sh           # permissionless keeper: marks overdue loans defaulted, expires stale proposals
 ```
 
 ## Public interface (ABI)
@@ -100,24 +132,36 @@ All entrypoints are on the `OurDao` contract (`lib.rs`). Errors are the numeric 
 | `add_admin(caller, admin)` / `remove_admin(caller, admin)` | Admin-only. The last admin can never be removed. |
 | `set_consensus_threshold(caller, threshold)` | Admin-only, basis points. |
 | `set_loan_policy(caller, policy)` | Admin-only. |
-| `pause(caller)` / `unpause(caller)` | Admin-only emergency stop. |
+| `execute_policy_update(caller)` / `cancel_policy_update(caller)` / `try_execute_policy_update()` | Admin-only 48h timelock policy update execution and cancellation. |
+| `pause(caller)` / `unpause(caller)` | Admin-only emergency stop (pauser can also pause). |
+| `set_pauser(caller, pauser)` / `revoke_pauser(caller)` | Admin-only management of emergency pauser address. |
+| `propose_token_addition(caller, token)` / `execute_token_addition(caller, token)` | Admin-only. Whitelists an extra treasury asset after the 48h `TIMELOCK_DURATION`. The base `token` is always whitelisted. |
+| `remove_token(caller, token)` | Admin-only. Blocks new loans/withdrawals in `token`; loans already issued in it stay repayable. The base token can't be removed. |
+| `bump_dao_ttl()` | Extends the contract instance and core storage TTL. |
 
 **Membership**
 
 | Method | Description |
 |---|---|
 | `register_member(member)` | Pays the membership fee, joins the DAO. |
-| `exit_dao(member)` | Withdraws pro-rata share + stake + pending yield. Blocked while `has_active_loan`. |
-| `claim_rewards(member)` | Withdraws accrued loan-interest yield. |
+| `exit_dao(member)` | Withdraws the base-token pro-rata share and stake, plus pending yield in each tracked asset. Blocked while `has_active_loan`. |
+| `claim_rewards(member)` | Withdraws accrued base-token loan-interest yield. |
+| `claim_rewards_in_asset(member, asset)` | Withdraws accrued loan-interest yield in `asset` without settling other assets. |
+| `delegate_vote(delegator, delegatee)` | Delegates voting power to another active member (single-level). |
 
 **Lending**
 
 | Method | Description |
 |---|---|
 | `request_loan(borrower, amount) -> proposal_id` | Opens a loan proposal (3-day editing window). |
+| `request_loan_in_asset(borrower, amount, asset, metadata_cid) -> proposal_id` | Same as `request_loan`, denominated in a whitelisted `asset` and sized/priced against the treasury held in it. |
 | `edit_loan_proposal(borrower, proposal_id, new_amount)` | Only during the editing window, only the borrower. |
+| `cancel_loan_proposal(borrower, proposal_id)` | Only during the editing window, only the borrower. |
 | `vote_on_loan_proposal(voter, proposal_id, support)` | Auto-approves and disburses at the consensus threshold. |
+| `vote_batch(voter, votes)` | Casts votes across up to 10 loan proposals in one call. Larger batches return `TooManyVotesInBatch` (92). |
+| `disburse_approved_loan(loan_id)` | Disburses an approved loan's funds. |
 | `repay_loan(borrower, loan_id)` | Collects the full outstanding balance in one transaction. |
+| `repay_loan_in_asset(borrower, loan_id, asset)` | `repay_loan` that fails with `AssetMismatch` unless `asset` is the loan's own asset. Interest is credited as yield in the loan's own asset. |
 | `repay_loan_partial(borrower, loan_id, amount)` | Collects up to `amount` of the outstanding balance. Applies to accrued interest first, then principal; the loan flips to repaid only once the balance reaches exactly zero. |
 | `mark_loan_defaulted(loan_id)` | **Permissionless.** Callable once `due_time + grace_period` has elapsed. |
 | `expire_loan_proposal(proposal_id)` | **Permissionless keeper call.** Persists the expired state for a proposal whose voting window has passed without reaching quorum. No-op on repeat calls. |
@@ -127,13 +171,36 @@ All entrypoints are on the `OurDao` contract (`lib.rs`). Errors are the numeric 
 | Method | Description |
 |---|---|
 | `propose_treasury_withdrawal(proposer, amount, destination, reason, private) -> proposal_id` | `private` routes it through commit-reveal instead of open voting. |
+| `propose_withdrawal_in_asset(proposer, amount, asset, destination, reason, private) -> proposal_id` | Same as `propose_treasury_withdrawal`, paid out in a whitelisted `asset`. (Soroban caps entrypoint names at 32 characters, hence no `treasury_` prefix.) |
+| `cancel_treasury_proposal(proposer, proposal_id)` | Only the proposer, only while pending and within the policy's editing period. |
 | `vote_on_treasury_proposal(voter, proposal_id, support)` | Auto-executes at 60% consensus. Rejected on a private proposal — use commit/reveal instead. |
+| `execute_treasury_proposal(proposal_id)` | Executes an approved treasury withdrawal proposal. |
+
+**Migration / State Seeding (#332)**
+
+| Method | Description |
+|---|---|
+| `seed_members(entries)` / `seed_stakes(entries)` / `seed_pending_yield(entries)` / `seed_loans(entries)` / `seed_names(entries)` / `seed_docs(entries)` | Admin-only migration state seeding entrypoints. |
+| `lock_seeding()` / `is_seeding_locked() -> bool` | Permanently locks seeding upon migration completion. |
 
 **Staking**
 
 | Method | Description |
 |---|---|
-| `stake(member, amount)` / `unstake(member, amount)` | Boosts voting weight; kept separate from lendable treasury. |
+| `stake(member, amount)` / `unstake(member, amount)` | Boosts voting weight quadratically (`1 + isqrt(stake / 100)`, capped at 6); kept separate from lendable treasury. |
+
+**Staking weight table.** Voting weight is `1 + min(isqrt(stake / 100), 5)`, as computed by `util::voting_weight`. Each bonus step costs more than the one before it, so the boost grows slowly with stake:
+
+| Staked amount | Bonus votes | Voting weight |
+|---:|---:|---:|
+| 0 – 99 | 0 | 1 |
+| 100 – 399 | 1 | 2 |
+| 400 – 899 | 2 | 3 |
+| 900 – 1,599 | 3 | 4 |
+| 1,600 – 2,499 | 4 | 5 |
+| 2,500 and above | 5 (cap) | 6 |
+
+The *k*-th bonus vote starts at `k² × 100` staked tokens, so the thresholds are 100, 400, 900, 1,600, and 2,500. The table shows a member's own stake. A member's weight also includes the base vote and boost of anyone who has delegated to them.
 
 **Name registry**
 
@@ -146,8 +213,10 @@ All entrypoints are on the `OurDao` contract (`lib.rs`). Errors are the numeric 
 
 | Method | Description |
 |---|---|
-| `commit_treasury_vote(voter, proposal_id, commitment)` | `commitment = sha256(support_byte ++ salt)`. |
+| `commit_treasury_vote(voter, proposal_id, commitment)` | `commitment = sha256(XDR(voter) ++ proposal_id_be ++ support_byte ++ salt)`. |
 | `reveal_treasury_vote(voter, proposal_id, support, salt)` | Verifies the commitment, then tallies through the shared path. |
+| `verify_commitment(voter, proposal_id, support, salt) -> bool` | Read-only reveal pre-check; `false` when no commitment matches. |
+| `get_commit_reveal_window(proposal_id) -> Result<(u64, u64), Error>` | `(commit_end, reveal_end)` for a private proposal; `NotAuthorized` for a public one. |
 
 **Content-hash documents**
 
@@ -156,7 +225,9 @@ All entrypoints are on the `OurDao` contract (`lib.rs`). Errors are the numeric 
 | `attach_document(caller, kind, proposal_id, content_hash)` | Anchors an off-chain content hash (e.g. IPFS CID) to a real loan/treasury proposal. |
 | `get_document(kind, proposal_id) -> Option<Bytes>` | View. |
 
-**Views** — `get_member`, `get_loan`, `get_loan_proposal` (auto-refreshes expired phase), `get_treasury_proposal`, `get_loan_policy`, `get_admins`, `is_admin`, `is_member`, `is_eligible_for_loan`, `get_treasury_balance`, `get_total_members`, `get_active_members`, `get_consensus_threshold`, `get_token`, `is_paused`, `get_stake`, `get_pending_yield`, `calculate_loan_terms`, `calculate_exit_share`, `has_voted(kind, proposal_id, voter)`.
+**Views** — `get_member`, `get_member_overview`, `get_loan`, `get_loan_proposal` (auto-refreshes expired phase), `get_loan_proposal_count`, `get_treasury_proposal`, `get_treasury_proposal_count`, `get_loan_policy`, `get_pending_policy_update`, `get_admins`, `is_admin`, `is_member`, `is_eligible_for_loan`, `get_treasury_balance`, `get_treasury_balance_in_asset(asset)`, `is_token_whitelisted(token)`, `get_whitelisted_tokens`, `get_total_members`, `get_active_members`, `get_consensus_threshold`, `get_token`, `get_version`, `get_dao_summary` (all headline state in one call), `is_paused`, `get_stake`, `get_stake_weight_unit`, `get_max_stake_bonus`, `get_pending_yield` (base token), `get_pending_yield_in_asset(member, asset)`, `get_delegate`, `list_members`, `list_treasury_proposals`, `calculate_loan_terms` (a quote is only available when `amount <= max_loan`; `max_loan` is 0 when the treasury is empty), `calculate_exit_share`, `has_voted(kind, proposal_id, voter)`.
+
+> **Note on Treasury Balance Views (#500, #501)**: `get_treasury_balance` and `get_treasury_balance_in_asset` report the DAO's lendable treasury balance, explicitly excluding staked member deposits for the base token to maintain invariant L1. Raw, stake-inclusive token balance is not exposed as a separate entrypoint because external audit/reconciliation tools can query the token contract's standard `balance(&dao_address)` directly. Furthermore, `get_treasury_balance_in_asset(asset)` (#501) is not restricted to whitelisted assets; it reads the contract's actual balance for any queried asset address.
 
 ## Event catalog
 
@@ -171,17 +242,24 @@ Every state-changing call publishes an event, which `ourdao-backend` indexes sin
 | `joined` | `(member, fee)` | `register_member` |
 | `exited` | `(member, share)` | `exit_dao` |
 | `claimed` | `(member, pending)` | `claim_rewards` |
-| `loan_req` | `(id, borrower, amount, total_repayment)` | `request_loan` |
+| `exit_a` | `(member, asset, amount)` | `exit_dao` non-base asset yield settlement |
+| `clm_ast` | `(member, asset, amount)` | `claim_rewards_in_asset` for a non-base asset |
+| `loan_req` | `(id, borrower, amount, total_repayment, asset)` | `request_loan` / `request_loan_in_asset` — `asset` is the loan's asset (the base token unless set) |
 | `loan_edit` | `(proposal_id, borrower, new_amount, total_repayment)` | `edit_loan_proposal` |
 | `loan_vote` | `(proposal_id, voter, support)` | `vote_on_loan_proposal` |
-| `loan_appr` | `(id, borrower, amount)` | auto-fired on approval — `id` is both the loan's and its proposal's id |
-| `loan_rpy` | `(loan_id, borrower, outstanding)` | `repay_loan` / `repay_loan_partial` — `outstanding` is the balance still remaining *after* this payment (0 for a payment that fully repays the loan) |
+| `loan_appr` | `(id, borrower, amount, due_time, asset)` | auto-fired on approval — `id` is both the loan's and its proposal's id |
+| `loan_rpy` | `(loan_id, borrower, outstanding, asset)` | `repay_loan` / `repay_loan_partial` / `repay_loan_in_asset` — `outstanding` is the balance still remaining *after* this payment (0 for a payment that fully repays the loan) |
 | `loan_dflt` | `(loan_id, borrower, penalty)` | `mark_loan_defaulted` |
 | `loan_exp` | `(proposal_id, borrower)` | `expire_loan_proposal` (permissionless keeper) |
-| `interest` | `(interest, active_members)` | fired alongside `loan_rpy` |
+| `interest` | `(interest, active_members, asset)` | fired alongside `loan_rpy` for positive interest repayments in any asset |
 | `tre_prop` | `(id, amount, destination, private)` | `propose_treasury_withdrawal` |
 | `tre_vote` | `(id, voter, support)` | `vote_on_treasury_proposal` |
 | `tre_exec` | `(id, amount, destination)` | auto-fired on execution |
+| `tre_exp` | `(proposal_id, proposer)` | `expire_treasury_proposal` (permissionless keeper) |
+| `loan_asst` / `tre_asset` | `(id, asset)` | `request_loan_in_asset` / `propose_withdrawal_in_asset`, only when `asset` isn't the base token |
+| `prop_canc` | `(proposal_id, timestamp)` | `cancel_loan_proposal` / `cancel_treasury_proposal` |
+| `tok_prop` | `(caller, token, execution_time)` | `propose_token_addition` |
+| `tok_add` / `tok_rem` | `(caller, token)` | `execute_token_addition` / `remove_token` |
 | `staked` / `unstaked` | `(member, amount, new_stake)` | `stake` / `unstake` |
 | `name_reg` | `(name, owner)` | `register_name` |
 | `committed` | `(proposal_id, voter)` | `commit_treasury_vote` |
@@ -201,6 +279,9 @@ Numeric codes are stable and part of the ABI — new variants get appended rathe
 | 50 | Treasury: `TreasuryProposalNotFound` |
 | 60–67 | Native-swap modules: `NameTaken`, `NameNotFound`, `NoStake`, `InsufficientStake`, `NoCommitment`, `CommitmentMismatch`, `AlreadyRevealed`, `NothingToClaim` |
 | 70–72 | Appended: `ProposalNotExpired`, `InvalidName`, `NotYetRevealed` |
+| 83–87 | Multi-token treasury: `TokenNotWhitelisted`, `TokenAlreadyWhitelisted`, `NoPendingTokenAddition`, `AssetMismatch`, `CannotRemoveBaseToken` |
+| 92 | Multi-token safety: `TokenHasBalance` |
+| 93 | Appended: `JoinedAfterProposal` — voter joined after the proposal was created (#73) |
 
 ## Build & test
 
@@ -229,7 +310,7 @@ cargo build --target wasm32v1-none --release
 stellar contract build --optimize
 ```
 
-CI (`.github/workflows/ci.yml`) runs `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test`, and the wasm build in one job on every push and PR. A separate `audit` job runs `cargo audit` on the same triggers — it's split out so a newly published advisory (which can land against a pin we already know about and can't move, like the one below) surfaces visibly without blocking merges on unrelated PRs.
+CI (`.github/workflows/ci.yml`) first runs a fast `check` job (`cargo check --locked --all-targets`) that the other build jobs depend on, then runs `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test`, and the wasm build in one job on every push and PR. A separate `audit` job runs `cargo audit` on the same triggers — it's split out so a newly published advisory (which can land against a pin we already know about and can't move, like the one below) surfaces visibly without blocking merges on unrelated PRs.
 
 > **Note on dependencies:** `Cargo.lock` pins `ed25519-dalek` to `2.2.0`. A newer
 > transitive release (`3.0.0`) is incompatible with the pinned `rand_core` used by
@@ -238,19 +319,55 @@ CI (`.github/workflows/ci.yml`) runs `cargo fmt --check`, `cargo clippy -- -D wa
 
 ## Deploy to testnet
 
-The quickest path is the helper script, which creates and funds a deployer
-identity (via friendbot), builds the optimized wasm, deploys, and prints the
-contract id plus a ready-to-edit `initialize` command:
+The quickest path is the helper script. It creates and funds a deployer
+identity (via friendbot), builds the optimized wasm, prints the wasm SHA-256,
+asks for confirmation, deploys, and then runs `initialize` in the same
+invocation so a contract is never left deployed-but-uninitialized (which would
+let anyone front-run `initialize`):
 
 ```bash
-./scripts/deploy-testnet.sh
+./scripts/deploy-testnet.sh --dry-run   # print every command, change nothing
+./scripts/deploy-testnet.sh             # the real thing (asks for confirmation)
 ```
 
-Override the defaults with environment variables if needed:
+By default the DAO uses the native XLM Stellar Asset Contract, with the deployer
+as the only admin. Override the defaults with environment variables:
 
 ```bash
-IDENTITY=my-key NETWORK=testnet ALIAS=ourdao-dao ./scripts/deploy-testnet.sh
+IDENTITY=my-key ALIAS=ourdao-dao TOKEN=<token-contract-id> \
+  ADMINS_JSON='["G...","G..."]' CONSENSUS_THRESHOLD=5100 MEMBERSHIP_FEE=10000000 \
+  ./scripts/deploy-testnet.sh
 ```
+
+On testnet the script also deploys a second test asset (`SECOND_ASSET_CODE`, default
+`OURTESTB`) issued by the deployer, and proposes it for the treasury whitelist. Whitelisting
+is timelocked for 48 hours, so the script ends by printing the `execute_token_addition`
+command to run once that has passed.
+
+`POLICY_JSON` overrides the default loan policy; see `./scripts/deploy-testnet.sh --help`
+for every option. If `initialize` fails after the deploy, the script says so
+loudly and exits non-zero: initialize that contract immediately or discard it.
+
+### Deploying to mainnet
+
+The script refuses any network other than `testnet` unless you pass
+`--allow-non-testnet` (an exported `NETWORK=mainnet` alone does nothing). For
+another network it is deliberately stricter:
+
+- it never generates or funds keys: the deployer identity must already exist,
+- `TOKEN` must be set explicitly (there is no default asset),
+- it needs an interactive terminal and you must type the network name to
+  confirm; `--yes` does not skip this.
+
+```bash
+./scripts/deploy-testnet.sh --dry-run --allow-non-testnet --network mainnet   # review first
+TOKEN=<usdc-contract-id> IDENTITY=<existing-key> \
+  ./scripts/deploy-testnet.sh --allow-non-testnet --network mainnet
+```
+
+The contract cannot be upgraded after deployment, so review the dry run, check
+the printed wasm SHA-256 against a release (see `DEPLOYMENTS.md`), and get the
+audit items in `docs/AUDIT_PREPARATION.md` closed before deploying real funds.
 
 Or deploy manually:
 
@@ -266,6 +383,30 @@ After deploying, initialize the DAO with your admin set, consensus threshold
 (bps), membership fee, DAO token contract id, and loan policy. The script
 prints a filled-in example; the token id can be the testnet USDC contract or
 the native XLM Stellar Asset Contract (`stellar contract id asset --asset native --network testnet`).
+
+## Operator scripts
+
+Both scripts take a contract id and default to testnet (`--network <name>` to change it). They need the `stellar` CLI and `jq`.
+
+**Exporting state.** `scripts/export-state.sh <contract-id> --out state.json` reads the DAO's state through read-only views and writes it as one JSON document. It submits nothing. It warns when some members can't be read because their storage has expired. This is step 3 of the [migration procedure](docs/MIGRATION.md).
+
+**Keeper.** `scripts/keeper.sh` runs the time-based transitions that anyone may trigger:
+
+- `mark_loan_defaulted` for each active loan past `due_time + default_grace_period`;
+- `expire_loan_proposal` and `expire_treasury_proposal` for proposals whose voting window has closed.
+
+It does nothing while the contract is paused, and exits non-zero if any call fails so cron or monitoring can alert on it. Run it with `--dry-run` first to see what it would submit. The identity that pays the fees must already exist:
+
+```bash
+stellar keys generate ourdao-keeper --network testnet --fund
+./scripts/keeper.sh --dry-run --network testnet <contract-id>
+```
+
+To run it every 15 minutes from cron:
+
+```bash
+*/15 * * * * IDENTITY=ourdao-keeper /path/to/ourdao-contracts/scripts/keeper.sh --network testnet <contract-id> >> ~/ourdao-keeper.log 2>&1
+```
 
 ## Security notes
 
@@ -300,11 +441,93 @@ Found a security vulnerability? See [SECURITY.md](./SECURITY.md) — don't open 
 
 MIT
 
-## Resource Costs and Membership Ceiling
+## Resource costs
 
-As measured via SDK budget instrumentation (Issue #138):
-- `exit_dao` has O(n) scaling due to iterating all members in `total_active_contributions`.
-- `is_admin` scales with admin count.
-- Other entrypoints are O(1) or scale with smaller sets (like active proposals).
+Measured against the optimized release wasm (58,457 bytes) with the SDK's
+invocation metering, in a 10-member DAO. Regenerate with `make costs`
+(source: [`tests/costs.rs`](./contracts/dao/src/tests/costs.rs)).
 
-**Membership Ceiling:** Due to the O(n) scan in `exit_dao`, the contract can safely support up to **~10,000 members** before risking transaction resource limit exhaustion on exit. Optimizations (e.g. tracking total contributions natively) are required to scale further.
+| Entrypoint | CPU instructions | Memory (KiB) | Entries read | Entries written | Bytes written | Event bytes | Est. fee (stroops) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `register_member` | 1,737,105 | 1,372 | 9 | 6 | 2,676 | 376 | 7,291,448 |
+| `stake` | 1,567,392 | 1,363 | 10 | 6 | 2,348 | 396 | 2,821,539 |
+| `register_name` | 1,148,775 | 1,313 | 6 | 3 | 348 | 136 | 3,742,731 |
+| `add_admin` | 984,100 | 1,305 | 4 | 2 | 1,656 | 112 | 1,443,823 |
+| `propose_policy_update` | 1,000,164 | 1,306 | 4 | 2 | 2,304 | 132 | 3,202,621 |
+| `request_loan` | 1,888,826 | 1,362 | 8 | 3 | 3,032 | 168 | 7,416,978 |
+| `attach_document` | 1,491,392 | 1,320 | 7 | 2 | 224 | 152 | 2,642,299 |
+| `edit_loan_proposal` | 1,567,566 | 1,330 | 9 | 2 | 764 | 172 | 1,396,598 |
+| `vote_on_loan_proposal` | 2,386,168 | 1,417 | 19 | 3 | 908 | 140 | 2,593,677 |
+| `vote_on_loan_proposal` (deciding vote, disburses) | 3,291,980 | 1,480 | 25 | 7 | 2,304 | 540 | 6,492,906 |
+| `repay_loan_partial` | 1,793,716 | 1,394 | 10 | 6 | 3,404 | 504 | 1,579,588 |
+| `repay_loan` | 1,761,672 | 1,369 | 10 | 5 | 1,468 | 384 | 1,370,815 |
+| `claim_rewards` | 1,513,351 | 1,350 | 9 | 4 | 676 | 500 | 1,352,370 |
+| `mark_loan_defaulted` | 1,594,180 | 1,348 | 4 | 3 | 3,344 | 152 | 293,969 |
+| `propose_treasury_withdrawal` | 2,034,857 | 1,394 | 10 | 3 | 3,108 | 156 | 6,689,526 |
+| `vote_on_treasury_proposal` | 2,098,089 | 1,363 | 19 | 3 | 820 | 136 | 2,627,282 |
+| `vote_on_treasury_proposal` (deciding vote, pays out) | 2,671,416 | 1,461 | 24 | 5 | 1,268 | 520 | 3,330,146 |
+| `unstake` | 1,968,115 | 1,406 | 11 | 5 | 3,100 | 396 | 1,377,027 |
+| `exit_dao` | 3,646,895 | 1,500 | 20 | 6 | 3,616 | 376 | 1,399,042 |
+| `get_member` | 853,651 | 1,276 | 3 | 0 | 0 | 0 | 2,135 |
+| `get_member_loan_stats` | 830,372 | 1,275 | 3 | 0 | 0 | 0 | 2,076 |
+| `get_voting_weight` | 1,376,242 | 1,291 | 14 | 0 | 0 | 0 | 3,441 |
+| `calculate_exit_share` | 2,325,631 | 1,332 | 15 | 0 | 0 | 0 | 5,815 |
+| `is_eligible_for_loan` | 956,945 | 1,283 | 3 | 0 | 0 | 0 | 2,393 |
+| `get_treasury_balance` | 986,734 | 1,299 | 4 | 0 | 0 | 0 | 2,467 |
+
+How to read it:
+
+- **Fees** use the pubnet fee snapshot built into `soroban-sdk` 26 (1 XLM =
+  10,000,000 stroops) and include rent, which is why calls that create
+  persistent entries (`register_member`, `request_loan`,
+  `propose_treasury_withdrawal`) cost the most: each new entry is prepaid for
+  its 90-day TTL. Treat them as estimates; simulate the transaction against
+  the live network for an exact quote.
+- **Memory** is dominated by instantiating the wasm module (about 1.25 MiB
+  for any call) and does not affect the fee.
+- Views cost nothing on-chain when called through simulation; their row is
+  what they would cost inside a transaction.
+- Not measured: `delegate_vote` currently traps (it calls `require_auth`
+  twice on the delegator), commit/reveal voting (the reveal path fails its
+  own tests on `main`), and the `*_in_asset` variants (#354).
+
+### Scaling with membership and the membership ceiling
+
+The member list lives in instance storage, so every call loads it, but only
+a few entrypoints visit each member. Cells are `CPU instructions / ledger
+entries touched` at exactly that many members (`make costs` prints this
+table too):
+
+| Members | `get_total_members` | `register_member` | `vote_on_loan_proposal` | `vote_on_treasury_proposal` | `exit_dao` |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 10 | 766,963 / 2 | 1,722,482 / 15 | 2,215,574 / 21 | 1,950,623 / 21 | 3,286,408 / 25 |
+| 25 | 777,325 / 2 | 1,921,613 / 15 | 3,670,987 / 36 | 2,800,960 / 36 | 5,265,285 / 40 |
+| 50 | 792,756 / 2 | 2,253,660 / 15 | 7,295,789 / 61 | 4,349,551 / 61 | 8,659,901 / 65 |
+| 85 | 814,438 / 2 | 2,703,817 / 15 | 14,873,074 / 96 | 6,761,284 / 96 | 13,786,173 / 100 |
+| 86 | 815,964 / 2 | 2,716,112 / 15 | 15,131,987 / 97 | 6,843,860 / 97 | 13,944,993 / 101 (over) |
+| 89 | 816,942 / 2 | 2,753,297 / 15 | 15,927,542 / 100 | 7,067,432 / 100 | 14,380,177 / 104 (over) |
+| 90 | 818,468 / 2 | 2,765,692 / 15 | 16,198,117 / 101 (over) | 7,143,798 / 101 (over) | 14,513,552 / 105 (over) |
+| 100 | 823,828 / 2 | 2,885,388 / 15 | 19,014,001 / 111 (over) | 7,885,264 / 111 (over) | 16,041,560 / 115 (over) |
+
+CPU stays far below the per-transaction instruction limit; **ledger entries
+are the binding constraint.** A vote touches `members + 11` entries because
+`voting_weight` reads every member's delegation record, and `exit_dao`
+touches `members + 15` because the exit share sums every member's
+contribution. Against the per-transaction footprint of 100 entries in the
+SDK's mainnet snapshot (marked "over"), `exit_dao` fails from **86 members**
+and voting from **90 members**. Testnet allowed 400 entries when this was
+measured (protocol 29, October 2026), which moves the ceilings to 386 and
+390; check current values with `stellar network settings --network <name>`.
+Raising the ceiling needs those scans replaced with running totals kept up
+to date on join, exit, default and delegation.
+
+
+### Stateful and property tests
+
+For a fast CI run:
+
+```bash
+cargo test -p ourdao-dao stateful_actions_preserve_invariants
+cargo test -p ourdao-dao distribute_interest_preserves_tokens
+cargo test -p ourdao-dao member_counters_match_member_records_across_join_exit_rejoin
+

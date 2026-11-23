@@ -11,14 +11,21 @@ for the process.
 
 ## Accounting invariants
 
-### A1 — Distributed interest never exceeds collected interest
-**Statement:** The sum of `get_pending_yield(m)` across all active members is
-less than or equal to the total `interest` passed to `distribute_interest`.
-Specifically, each member receives exactly `interest / active_members` and the
-remainder (`interest % active_members`) stays in the treasury.
+### A1 — Distributed interest never exceeds collected interest per asset
+**Statement:** For each asset, the sum of pending yield across active members
+cannot exceed the total collected interest distributed in that asset. Each
+positive interest payment is combined only with that asset's carried
+remainder, divided equally among active members, and any indivisible
+remainder stays in that same asset. No asset's interest changes another
+asset's accumulator or pending yield.
 
-**Tested:** ✅ `proptests::distributed_interest_never_exceeds_collected`
-(`contracts/dao/src/test.rs`)
+**Interaction with Rebates and Discounts (ADR-0008) (#506):**
+Any future rebate or discount mechanism (such as ADR-0008 early repayment discount or ADR-0005 reputation discount) must only ever reduce the net interest amount passed to `distribute_interest`. Yield must never be credited for interest that was waived or discounted, since waived interest was never collected into the treasury. Implementers of ADR-0008 must ensure that `distribute_interest` receives only `collected_interest`, preserving Invariant A1.
+
+**Tested:** ✅ `tests::properties::distributed_interest_never_exceeds_collected`
+(`contracts/dao/src/tests/properties.rs`) for the base token, and
+`tests::membership::second_asset_interest_claim_and_exit_stay_in_that_asset`
+for non-base isolation.
 
 ---
 
@@ -28,8 +35,8 @@ remainder (`interest % active_members`) stays in the treasury.
 total treasury, so paying out every member simultaneously can never leave the
 treasury in deficit.
 
-**Tested:** ✅ `proptests::exit_shares_never_exceed_treasury`
-(`contracts/dao/src/test.rs`)
+**Tested:** ✅ `tests::properties::exit_shares_never_exceed_treasury`
+(`contracts/dao/src/tests/properties.rs`)
 
 ---
 
@@ -52,6 +59,52 @@ inconsistency; tracking issue: open as follow-up (#134).
 
 > **Note:** This is the invariant whose absence is hardest to notice without a
 > written list. A stated invariant is what makes the contradiction visible.
+
+---
+
+### A5 — Outstanding principal per asset matches the active loans in it
+**Statement:** For every asset, `get_treasury_accounting(asset).outstanding_principal`
+equals the principal still owed on `Active` loans denominated in that asset.
+Repayments cover interest first, so a loan owes
+`principal - (amount_repaid - min(amount_repaid, total_repayment - principal))`.
+An overdue penalty is booked as principal, so it counts until it is paid. A
+default writes off whatever is still owed. Loans added through `seed_loans`
+count too, and re-seeding an id replaces its previous contribution instead of
+adding to it.
+
+The same view reports the asset's actual `token_balance` and the `staked`
+portion of it (base token only). `token_balance - staked` is the spendable
+treasury. Any balance the indexed event history doesn't explain, such as a
+direct transfer to the contract, is drift.
+
+**Tested:** ✅ `tests::treasury::treasury_accounting_matches_manual_calculation`,
+`tests::treasury::seeded_loans_count_towards_outstanding_principal`,
+`tests::loans::loan_lifecycle_in_second_asset`
+(`contracts/dao/src/tests/`)
+
+---
+
+### A6 — A default slashes the base-token contribution, whatever the loan's asset
+**Statement:** `mark_loan_defaulted` behaves the same for a loan in a non-base
+asset as for a base-token loan:
+
+- The claim that is slashed is the borrower's `contribution`, which is their
+  share of the **base-token** treasury at exit (`calculate_exit_share`). It is
+  cut by `default_penalty_bps`, rounded up and capped at the contribution. The
+  cut is a fraction of the contribution, not of the loan, so it depends on
+  neither the loan's size nor its asset.
+- No tokens move. The borrower keeps the unpaid principal, and the treasury
+  of the loan's own asset absorbs the loss. That asset's outstanding principal
+  (A5) is written off. Nothing is recovered from the base token.
+- The borrower forfeits their unclaimed yield in each tracked asset (#89,
+  #271).
+- Non-base capital has no pro-rata exit share yet; accrued yield in that asset
+  is settled separately when a member claims or exits. ADR-0010 proposes the
+  future basket treatment of capital.
+
+**Tested:** ✅ `tests::loans::default_in_second_asset` (non-base asset),
+`tests::loans::loan_default_applies_penalty_and_frees_borrower` (base token)
+(`contracts/dao/src/tests/loans.rs`)
 
 ---
 
@@ -102,11 +155,12 @@ Tracking issue: open as follow-up (#134).
 
 ### G1 — Voting weight stays in `[1, 6]`
 **Statement:** `voting_weight(m)` is always in the range `[1, MAX_STAKE_BONUS + 1]`
-(`[1, 6]`). One base vote per active member, plus up to `MAX_STAKE_BONUS` (5)
-bonus votes at `STAKE_WEIGHT_UNIT` (100) tokens per bonus vote.
+(`[1, 6]`). One base vote per active member, plus a square-root boost of up to
+`MAX_STAKE_BONUS` (5) bonus votes (#182).
 
-**Tested:** ✅ `proptests::voting_weight_stays_in_bounds`
-(`contracts/dao/src/test.rs`)
+**Tested:** ✅ `properties::voting_weight_stays_in_bounds`,
+`staking::voting_weight_is_capped_above_the_square_root_curve`
+(`contracts/dao/src/tests/`)
 
 ---
 
@@ -114,8 +168,8 @@ bonus votes at `STAKE_WEIGHT_UNIT` (100) tokens per bonus vote.
 **Statement:** More stake never reduces voting weight:
 `stake_a <= stake_b ⟹ voting_weight(a) <= voting_weight(b)`.
 
-**Tested:** ✅ `proptests::voting_weight_is_monotonic_in_stake`
-(`contracts/dao/src/test.rs`)
+**Tested:** ✅ `properties::voting_weight_is_monotonic_in_stake`
+(`contracts/dao/src/tests/properties.rs`)
 
 ---
 
@@ -124,8 +178,60 @@ bonus votes at `STAKE_WEIGHT_UNIT` (100) tokens per bonus vote.
 `[policy.min_interest_rate, policy.max_interest_rate]`, for any `amount` and
 any treasury size.
 
-**Tested:** ✅ `proptests::loan_terms_rate_stays_within_policy_bounds`
-(`contracts/dao/src/test.rs`)
+**Tested:** ✅ `properties::loan_terms_rate_stays_within_policy_bounds`
+(`contracts/dao/src/tests/properties.rs`)
+
+---
+
+### G4 — The stake boost is quadratic and capped
+**Statement:** `stake_boost(s) == min(isqrt(s / STAKE_WEIGHT_UNIT), MAX_STAKE_BONUS)`,
+i.e. `k` bonus votes cost `STAKE_WEIGHT_UNIT * k * k` staked tokens
+(100 / 400 / 900 / 1600 / 2500). Consequences that must keep holding:
+- inside the band `[k^2, (k + 1)^2)` units the boost is exactly `k`;
+- 4x the stake buys 2x the boost, and no more;
+- past `STAKE_WEIGHT_UNIT * MAX_STAKE_BONUS^2` (2500) the boost is pinned at
+  the cap, so one member can never hold more than 6 votes;
+- the boost is never *more* generous than the linear rule it replaced.
+
+**Tested:** ✅ `properties::boost_is_constant_within_each_square_band`,
+`properties::boost_saturates_at_the_cap`,
+`properties::boost_never_exceeds_the_linear_rule`,
+`properties::isqrt_never_rounds_up`, `staking::isqrt_is_exact_on_every_perfect_square`,
+`staking::quadrupling_stake_doubles_the_boost`
+(`contracts/dao/src/tests/`)
+
+---
+
+## Rounding invariants
+
+### R1 — Rounding direction favours the treasury
+**Statement:** Every division site across the contracts is explicitly specified so that
+rounding favours the DAO treasury:
+- **Member debts and penalties round UP (ceil division):** Borrowers pay at least the
+  exact interest or penalty, and integer truncation cannot be exploited to evade obligations.
+  Specifically: `(a * b + denom - 1) / denom`.
+- **Member payouts and loan disbursements round DOWN (floor division):** Treasury outflows
+  never exceed available or allocated funds, and sub-token remainders are retained by
+  the DAO treasury. Specifically: `a * b / denom`.
+- **Consensus quorum thresholds round UP (ceil division):** Approval bars always meet or
+  exceed the required consensus percentage. Specifically: `(base * threshold + BP - 1) / BP`.
+- **Staking bonuses round DOWN (floor division):** Sub-unit stakes do not grant voting
+  power before `isqrt`. Specifically: `staked / STAKE_WEIGHT_UNIT`.
+
+### Rounding and division inventory
+
+| # | Location | Operation / Expression | Rounding | Category | Treasury Rationale | Test Coverage |
+|---|----------|------------------------|----------|----------|-------------------|---------------|
+| 1 | `contracts/dao/src/loans.rs:25` | `amount * BASIS_POINTS / treasury` | **Floor** | Pricing ratio | Ratio of loan amount to treasury; capped at `BASIS_POINTS`. | ✅ `properties::loan_terms_rate_stays_within_policy_bounds` |
+| 2 | `contracts/dao/src/loans.rs:34` | `loan_ratio * spread / BASIS_POINTS` | **Floor** | Pricing rate | Added interest rate scaling within policy spread. | ✅ `properties::loan_terms_rate_stays_within_policy_bounds` |
+| 3 | `contracts/dao/src/loans.rs:43` | `(amount * rate + BASIS_POINTS - 1) / BASIS_POINTS` | **Ceil (UP)** | Member Debt | Loan interest owed to treasury; rounds up so treasury receives full interest. | ✅ `tests::loans::loan_interest_rounds_up_to_favour_treasury` |
+| 4 | `contracts/dao/src/loans.rs:121` | `treasury * max_loan_to_treasury_ratio / BASIS_POINTS` | **Floor (DOWN)** | Treasury Outflow | Max loan disbursement cap; rounds down to protect treasury reserves. | ✅ `tests::loans::loan_exceeds_treasury_ratio` |
+| 5 | `contracts/dao/src/loans.rs:524` | `(outstanding * default_penalty_bps + BASIS_POINTS - 1) / BASIS_POINTS` | **Ceil (UP)** | Member Debt | Overdue penalty added on late repayment; rounds up to favour treasury. | ✅ `tests::loans::overdue_penalty_rounds_up_to_favour_treasury` |
+| 6 | `contracts/dao/src/loans.rs:643` | `(contribution * default_penalty_bps + BASIS_POINTS - 1) / BASIS_POINTS` | **Ceil (UP)** | Member Debt | Default penalty slashed from borrower contribution; rounds up to protect treasury. | ✅ `tests::loans::default_penalty_rounds_up_to_favour_treasury` |
+| 7 | `contracts/dao/src/loans.rs:782` | `total_interest / active_members` | **Floor (DOWN)** | Member Payout | Per-asset yield distribution; rounds down and remainder is stored for the same asset (Invariant A1). | ✅ `properties::distributed_interest_never_exceeds_collected` |
+| 8 | `contracts/dao/src/membership.rs:154` | `treasury * contribution / total_contributions` | **Floor (DOWN)** | Member Payout | Pro-rata exit share; rounds down so total exit shares never exceed treasury (Invariant A2). | ✅ `tests::membership::exit_share_rounds_down_to_favour_treasury`, `properties::exit_shares_never_exceed_treasury` |
+| 9 | `contracts/dao/src/util.rs:129` | `staked / STAKE_WEIGHT_UNIT` | **Floor (DOWN)** | Governance | Stake weight bonus units before `isqrt`; prevents partial units from granting unearned votes. | ✅ `properties::boost_is_constant_within_each_square_band` |
+| 10 | `contracts/dao/src/util.rs:185` | `(base * threshold_bps + BASIS_POINTS - 1) / BASIS_POINTS` | **Ceil (UP)** | Governance | Minimum required votes for consensus quorum; rounds up to strictly enforce voting threshold. | ✅ `tests::loans::loan_proposal_uses_dynamic_quorum_threshold` |
 
 ---
 
@@ -138,3 +244,26 @@ any treasury size.
 3. Untested invariants (**❌**) are the highest-priority candidates for new property
    tests — they represent the shortest path from "working code" to "a bug nobody
    noticed."
+
+---
+
+## Rounding policy (issue #325)
+
+Treasury/member accounting uses explicit directions. All amounts and
+intermediate products are non-negative at these division points.
+
+| Division site | Direction | Justification |
+| --- | --- | --- |
+| `loans.rs::quote_terms`: loan size / treasury | **Ceil** | Never understate the borrower risk tier |
+| `loans.rs::quote_terms`: rate spread / basis points | **Ceil** | Never undercharge interest rate |
+| `loans.rs::quote_terms`: principal * rate / basis points | **Ceil** | Member debt rounds up |
+| `loans.rs::request_loan_in_asset`: max available loan | **Floor** | Never authorize more treasury outflow than collateral ratio |
+| `loans.rs::repay_loan_partial`: overdue penalty / basis points | **Ceil** | Member debt rounds up |
+| `loans.rs::default_loan`: contribution slash / basis points | **Ceil** | Avoid under-penalizing default; cap at member contribution |
+| `loans.rs::distribute_interest`: interest / member count | **Floor** | Member payouts never exceed collected interest; remainder carried forward |
+| `membership.rs::calculate_exit_share`: treasury * contribution / total | **Floor** | Member payout cannot exceed treasury claim |
+| `util.rs::stake_boost`: stake / weight unit | **Floor** | Incomplete unit earns no bonus |
+| `util.rs::required_votes`: active members * threshold / 10,000 | **Ceil** | Fractional vote cannot satisfy threshold |
+
+Where `checked_mul` overflows in a loan quote, its existing fail-safe
+fallback remains. Do not replace rounding with floating-point conversions.

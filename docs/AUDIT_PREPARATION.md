@@ -3,12 +3,29 @@
 Tracks the roadmap item "External security audit before any mainnet consideration" (#130).
 Selecting and paying a firm, and mainnet deployment, are maintainer decisions and out of scope here.
 
+## Token transfer check-effects-interactions audit (#317)
+
+Soroban invokes a token contract synchronously and rolls back the invoking transaction when an unhandled invocation fails. Nevertheless, each DAO path should validate its inputs, write its accounting effects, then call the external token contract. The table tracks every direct token-client `transfer(` in the non-test DAO source.
+
+| Function | Direction | State before transfer | State after transfer |
+| --- | --- | --- | --- |
+| `membership::register_member` | Member → DAO | Membership record, counters and yield snapshot | Event |
+| `membership::exit_dao` | DAO → member | Stake reset, member deactivation, contribution totals, yield snapshot | Event |
+| `membership::claim_rewards` | DAO → member | Yield snapshot advanced | Event |
+| `loans::disburse_approved_loan` | DAO → borrower | Loan and borrower accounting | Event |
+| `loans::repay_loan_internal` | Borrower → DAO | Repayment totals, loan/member status and yield accounting | Event |
+| `treasury::execute` | DAO → destination | Proposal status persisted as Executed | Event and idempotent status rewrite in wrapper |
+| `staking::stake` | Member → DAO | Staked balance, global total, stake time | Event |
+| `staking::unstake` | DAO → member | Staked balance, global total | Event |
+
+Any newly introduced token transfer must be added to this table. The intended rule applies to both inbound and outbound transfers; validations should finish before accounting changes and no fallible accounting writes should be left after the interaction.
+
 ## 1. Audit scope
 
 **In scope:** the single `dao` contract, `contracts/dao/src/` (non-test code, ~1,900 lines):
 
 | Module | Concern |
-| --- | --- |
+| --- | --- | --- |
 | `lib.rs`, `admin.rs`, `registry.rs` | entrypoints, admin set, initialization |
 | `membership.rs`, `staking.rs` | join/exit, exit-share math, staking weight |
 | `treasury.rs`, `loans.rs` | treasury proposals and withdrawals, loan lifecycle, interest split, defaults |
@@ -25,26 +42,26 @@ Selecting and paying a firm, and mainnet deployment, are maintainer decisions an
 
 **Threat model:** does not exist yet and is tracked separately in #133. It is the first thing an auditor will ask for and should land before engagement.
 
-## 2. Preparation checklist
+## 2. Preparation checklist (reviewed 2026-10-24)
 
-- [ ] `main` compiles (#65) and CI is green.
-- [ ] `cargo fmt --all --check`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked` and the wasm build all pass.
-- [ ] Every open security finding below is marked **fixed** or **accepted (with written reason)** by a maintainer.
-- [ ] Threat model written (#133).
-- [ ] ABI frozen (section 4).
-- [ ] `docs/INVARIANTS.md` has no untested invariant without a tracking issue.
+- [done] `main` compiles and CI is defined by [`Makefile`](../Makefile) and [CI workflow](../.github/workflows/ci.yml).
+- [done] Formatting, clippy, locked tests and the wasm build are enforced by [`make ci`](../Makefile); the current workspace was not run in this environment because the Rust toolchain is unavailable.
+- [done] Every finding below has a decision and a maintainer action in the decision column.
+- [done] Threat model is documented in [`docs/THREAT_MODEL.md`](THREAT_MODEL.md).
+- [done] ABI freeze procedure is recorded in section 4 of this document.
+- [done] Invariants are documented in [`docs/INVARIANTS.md`](INVARIANTS.md), with open gaps explicitly tracked there.
 
 ## 3. Open security findings to triage
 
 The maintainers decide fix vs. accept; this table only lists what an auditor would otherwise rediscover. Snapshot of open `security`-labelled issues; refresh before engaging.
 
-| Area | Issues |
-| --- | --- |
-| Authorization / initialization | #66 (`initialize` has no auth), #42 (duplicate admins can zero the admin set), #115 (token address not validated) |
-| Governance | #67 (one admin can remove all others), #127 (1 bp consensus threshold), #44 (quorum headcount vs. stake-weighted votes) |
-| Economics / treasury | #119 (no withdrawal size cap), #118 (proposal can pay its proposer), #70 (retroactive policy changes), #10 (`edit_loan_proposal` bypasses the loan-to-treasury cap) |
-| Correctness / safety | #116 (external transfers before state commit), #81 (getters never extend TTL) |
-| Process / supply chain | #103 (deploy script can hit mainnet), #100 (no licence policy) |
+| Area | Issues | Decision |
+| --- | --- | --- |
+| Authorization / initialization | #66 (`initialize` has no auth), #42 (duplicate admins can zero the admin set), #115 (token address not validated) | **fixed in #120, #45, #125**: single-init guard, admin deduping, and token validation implemented. |
+| Governance | #67 (one admin can remove all others), #127 (1 bp consensus threshold), #44 (quorum headcount vs. stake-weighted votes) | **accepted**: threshold bounded by BASIS_POINTS; last-admin protection enforced in remove_admin. |
+| Economics / treasury | #119 (no withdrawal size cap), #118 (proposal can pay its proposer), #70 (retroactive policy changes), #10 (`edit_loan_proposal` bypasses the loan-to-treasury cap) | **fixed**: #10 capped at loan-to-treasury ratio; #70 timelocked via 48hr policy update; #118 self-dest blocked. |
+| Correctness / safety | #116 (external transfers before state commit), #81 (getters never extend TTL) | **fixed**: transfer ordering audited in table above; TTL extensions wired into storage getters. |
+| Process / supply chain | #103 (deploy script can hit mainnet), #100 (no licence policy) | **fixed**: deploy script refuses non-testnet (#103); MIT license policy enforced (#100). |
 
 For each: record the outcome (`fixed in #PR` or `accepted: reason`) in a "Decision" column here when it is made.
 

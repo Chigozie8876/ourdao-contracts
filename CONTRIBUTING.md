@@ -44,6 +44,14 @@ If `cargo test` passes on a clean checkout, you're set up correctly. If it doesn
 
 ## Running the checks CI runs
 
+### CI
+
+The first job, `check`, runs `cargo check --locked --all-targets` on the PR's merge commit. It exists to catch a broken merge (a syntax error or a missing function) within a couple of minutes. `build-and-test` (format, lint, tests, coverage and wasm build) and `reproducible-build` declare `needs: check`, so when `check` fails they are skipped rather than each failing on the same error. To reproduce it locally:
+
+```bash
+cargo check --locked --all-targets
+```
+
 The `build-and-test` job runs exactly these four, and a pull request that fails any of them will not be merged. Run them locally first:
 
 ```bash
@@ -53,7 +61,7 @@ cargo test --locked                                          # full test suite
 cargo build --locked --target wasm32v1-none --release        # wasm build
 ```
 
-`make test`, `make fmt`, `make clippy`, and `make build` are shorthands for the same things.
+`make ci` runs all four in sequence — use it as your one-command pre-push check. The individual shorthands `make fmt`, `make clippy`, `make test`, and `make build` map flag-for-flag to their CI equivalents.
 
 A separate `audit` job runs `cargo audit` against `Cargo.lock` on every push and PR (`cargo install cargo-audit --locked` once locally, then `cargo audit` or `make audit`). It's a distinct job on purpose: an advisory landing against a dependency we already know about and can't move on (see the `ed25519-dalek` note below) shouldn't block merging unrelated PRs, but it still needs to stay visible.
 
@@ -79,6 +87,46 @@ These apply on top of the general rules above, because this is a smart contract:
 - **Don't add a second id counter.** A loan reuses its originating proposal's id (`loan.id == proposal.id`) on purpose — independent counters silently diverge as soon as any proposal is rejected. This invariant is covered by a regression test; if your change touches it, that test should tell you.
 - **Authorization changes need explicit justification.** If your PR adds, removes, or relaxes a `require_auth` call, the description must say exactly who can now do what they couldn't before, and why that's correct.
 
+## Events
+
+Emitted events are the primary source of on-chain state history for the off-chain indexer (`ourdao-backend`). All events use the `soroban_sdk::symbol_short!("...")` macro with a 3–4 character lowercase alphanumeric topic.
+
+**Naming style:**
+- Abbreviated actions: `prop_canc` (proposal cancel), `pol_prop` (policy propose), `tok_add` (token add)
+- Entity prefixes: `admin_add`, `admin_rem`, `loan_req`, `name_reg`, `staked`, `unstaked`
+- Descriptive singles: `joined`, `exited`, `claimed`, `interest`
+- Shared symbols: identical names (e.g., `prop_canc`) are used across modules when the payload `(proposal_id, now)` is the same
+
+**Requirements:**
+- Every state-changing entrypoint must emit an event. A state change with no event is invisible to clients.
+- If you add a new event, document it in the PR description so the indexer can be updated in lockstep.
+- **Do not rename existing event topics** — they are part of the public ABI. New events should follow the convention above.
+
+## Releases and Verification
+
+Releases are published automatically when a tag is pushed (e.g., `v1.0.0`). Each release includes:
+
+- A built, optimized wasm artifact (`ourdao_dao.optimized.wasm`)
+- A SHA-256 checksum in the release notes
+- Build metadata (commit, target, command)
+
+**Member verification:**
+
+To verify a deployed contract matches a GitHub release:
+
+```bash
+# 1. Download the wasm from the release or build it:
+git checkout <TAG>
+stellar contract build --optimize
+
+# 2. Compute its SHA-256:
+sha256sum target/wasm32v1-none/release/ourdao_dao.optimized.wasm
+
+# 3. Compare against the checksum in the release notes
+```
+
+Deployed contract IDs for each network are documented in [DEPLOYMENTS.md](./DEPLOYMENTS.md).
+
 ## What gets closed without review
 
 To keep review time going to real contributions, the following are closed on sight:
@@ -88,10 +136,14 @@ To keep review time going to real contributions, the following are closed on sig
 - Unrelated dependency bumps bundled into a feature or fix.
 - Generated or AI-authored changes whose author can't explain the diff when asked in review. The policy is outcome-based, not tool-based — use whatever tools you like, but you're accountable for understanding and defending what you submit.
 - Changes with no accompanying test, where the change affects contract behavior.
+- Additions to individual member views (`get_stake`, `get_pending_yield`, `get_member_loan_stats`, `name_of`, `get_delegate`) without updating the aggregated `MemberOverview` view accordingly.
 
 ## Reporting a security issue
 
 **Do not open a public issue for a security vulnerability.** See [SECURITY.md](./SECURITY.md) for scope, how to report privately, and our response commitment.
+
+### Audit Preparation Snapshot Refresh (#522)
+The open security findings snapshot in [`docs/AUDIT_PREPARATION.md`](./docs/AUDIT_PREPARATION.md) must be refreshed quarterly and verified prior to any external security audit engagement. Maintainers are responsible for reconciling each referenced issue's current status and documenting the resolution or decision in the table.
 
 ## License
 

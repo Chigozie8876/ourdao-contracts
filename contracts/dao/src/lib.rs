@@ -1,7 +1,4 @@
 #![no_std]
-// Events use the classic `env.events().publish` API, which is deprecated in
-// favor of `#[contractevent]` but still fully supported in soroban-sdk 26.
-#![allow(deprecated)]
 //! OurDAO — a member-owned lending DAO for Stellar Soroban.
 //!
 //! All value moves through a single configurable token set at initialization
@@ -18,6 +15,7 @@ mod docs;
 mod error;
 mod loans;
 mod membership;
+mod migration;
 mod privacy;
 mod registry;
 mod staking;
@@ -27,13 +25,23 @@ mod types;
 mod util;
 
 #[cfg(test)]
-mod test;
+mod tests;
+
+#[cfg(all(test, feature = "bench-budget"))]
+mod bench;
 
 use soroban_sdk::{contract, contractimpl, Address, Bytes, BytesN, Env, String, Vec};
+use types::{
+    AssetBalance, DaoSummary, SeedDocEntry, SeedNameEntry, SeedStakeEntry, SeedYieldEntry,
+    TreasuryAccounting,
+};
 
 pub use error::Error;
 pub use storage::ProposalKind;
-pub use types::{Loan, LoanPolicy, LoanProposal, LoanTerms, Member, TreasuryProposal};
+pub use types::{
+    Loan, LoanPolicy, LoanProposal, LoanTerms, Member, MemberLoanStats, MemberOverview,
+    PendingPolicyUpdate, StakingRewardClaimed, TreasuryProposal,
+};
 
 #[contract]
 pub struct OurDao;
@@ -71,8 +79,32 @@ impl OurDao {
         admin::remove_admin(&env, caller, admin)
     }
 
+    pub fn set_pauser(env: Env, caller: Address, pauser: Address) -> Result<(), Error> {
+        admin::set_pauser(&env, caller, pauser)
+    }
+
+    pub fn revoke_pauser(env: Env, caller: Address) -> Result<(), Error> {
+        admin::revoke_pauser(&env, caller)
+    }
+
     pub fn set_consensus_threshold(env: Env, caller: Address, threshold: u32) -> Result<(), Error> {
         admin::set_consensus_threshold(&env, caller, threshold)
+    }
+
+    pub fn propose_policy_update(
+        env: Env,
+        caller: Address,
+        policy: LoanPolicy,
+    ) -> Result<(), Error> {
+        admin::propose_policy_update(&env, caller, policy)
+    }
+
+    pub fn execute_policy_update(env: Env, caller: Address) -> Result<(), Error> {
+        admin::execute_policy_update(&env, caller)
+    }
+
+    pub fn cancel_policy_update(env: Env, caller: Address) -> Result<(), Error> {
+        admin::cancel_policy_update(&env, caller)
     }
 
     pub fn set_loan_policy(env: Env, caller: Address, policy: LoanPolicy) -> Result<(), Error> {
@@ -102,10 +134,40 @@ impl OurDao {
         membership::claim_rewards(&env, member)
     }
 
+    /// Withdraws accrued yield in the specified asset without affecting other
+    /// asset snapshots.
+    pub fn claim_rewards_in_asset(
+        env: Env,
+        member: Address,
+        asset: Address,
+    ) -> Result<i128, Error> {
+        membership::claim_rewards_in_asset(&env, member, asset)
+    }
+
+    pub fn delegate_vote(env: Env, delegator: Address, delegatee: Address) -> Result<(), Error> {
+        membership::delegate_vote(&env, delegator, delegatee)
+    }
+
     // ==================== loans ====================
 
-    pub fn request_loan(env: Env, borrower: Address, amount: i128) -> Result<u32, Error> {
-        loans::request_loan(&env, borrower, amount)
+    pub fn request_loan(
+        env: Env,
+        borrower: Address,
+        amount: i128,
+        metadata_cid: Option<String>,
+    ) -> Result<u32, Error> {
+        loans::request_loan(&env, borrower, amount, metadata_cid)
+    }
+
+    /// Requests a loan denominated in a specific whitelisted asset.
+    pub fn request_loan_in_asset(
+        env: Env,
+        borrower: Address,
+        amount: i128,
+        asset: Address,
+        metadata_cid: Option<String>,
+    ) -> Result<u32, Error> {
+        loans::request_loan_in_asset(&env, borrower, amount, asset, metadata_cid)
     }
 
     pub fn edit_loan_proposal(
@@ -117,6 +179,16 @@ impl OurDao {
         loans::edit_loan_proposal(&env, borrower, proposal_id, new_amount)
     }
 
+    /// Withdraws a loan proposal while it is still in its editing period.
+    /// See `loans::cancel_loan_proposal`.
+    pub fn cancel_loan_proposal(
+        env: Env,
+        borrower: Address,
+        proposal_id: u32,
+    ) -> Result<(), Error> {
+        loans::cancel_loan_proposal(&env, borrower, proposal_id)
+    }
+
     pub fn vote_on_loan_proposal(
         env: Env,
         voter: Address,
@@ -126,12 +198,32 @@ impl OurDao {
         loans::vote_on_loan_proposal(&env, voter, proposal_id, support)
     }
 
+    pub fn vote_batch(
+        env: Env,
+        voter: Address,
+        votes: Vec<crate::types::ProposalVote>,
+    ) -> Result<(), Error> {
+        loans::vote_batch(&env, voter, votes)
+    }
+
+    /// Pays out an approved loan that was waiting on treasury funds.
+    /// Permissionless keeper call — see `loans::disburse_approved_loan`.
     pub fn disburse_approved_loan(env: Env, proposal_id: u32) -> Result<(), Error> {
         loans::disburse_approved_loan(&env, proposal_id)
     }
 
     pub fn repay_loan(env: Env, borrower: Address, loan_id: u32) -> Result<(), Error> {
         loans::repay_loan(&env, borrower, loan_id)
+    }
+
+    /// Repays a loan using the asset the loan was denominated in.
+    pub fn repay_loan_in_asset(
+        env: Env,
+        borrower: Address,
+        loan_id: u32,
+        asset: Address,
+    ) -> Result<(), Error> {
+        loans::repay_loan_in_asset(&env, borrower, loan_id, asset)
     }
 
     /// Repays up to `amount` of a loan's outstanding balance. See
@@ -170,6 +262,29 @@ impl OurDao {
         treasury::propose_withdrawal(&env, proposer, amount, destination, reason, private)
     }
 
+    /// Proposes a treasury withdrawal denominated in a specific whitelisted asset.
+    /// Named without the `treasury_` prefix because Soroban caps entrypoint
+    /// names at 32 characters.
+    pub fn propose_withdrawal_in_asset(
+        env: Env,
+        proposer: Address,
+        amount: i128,
+        asset: Address,
+        destination: Address,
+        reason: String,
+        private: bool,
+    ) -> Result<u32, Error> {
+        treasury::propose_withdrawal_in_asset(
+            &env,
+            proposer,
+            amount,
+            asset,
+            destination,
+            reason,
+            private,
+        )
+    }
+
     pub fn vote_on_treasury_proposal(
         env: Env,
         voter: Address,
@@ -179,15 +294,33 @@ impl OurDao {
         treasury::vote(&env, voter, proposal_id, support)
     }
 
+    /// Withdraws a pending treasury proposal within the policy's editing
+    /// period. See `treasury::cancel_treasury_proposal`.
+    pub fn cancel_treasury_proposal(
+        env: Env,
+        proposer: Address,
+        proposal_id: u32,
+    ) -> Result<(), Error> {
+        treasury::cancel_treasury_proposal(&env, proposer, proposal_id)
+    }
+
     pub fn expire_treasury_proposal(env: Env, proposal_id: u32) -> Result<(), Error> {
         treasury::expire_treasury_proposal(&env, proposal_id)
     }
 
-    pub fn execute_treasury_proposal(
-        env: Env,
-        proposal_id: u32,
-    ) -> Result<(), Error> {
+    /// Executes an approved treasury withdrawal that was waiting on treasury
+    /// funds. Permissionless keeper call — see `treasury::execute_approved`.
+    pub fn execute_treasury_proposal(env: Env, proposal_id: u32) -> Result<(), Error> {
         treasury::execute_approved(&env, proposal_id)
+    }
+
+    // ==================== maintenance ====================
+
+    #[allow(deprecated)]
+    pub fn bump_dao_ttl(env: Env) {
+        storage::extend_instance(&env);
+        env.events()
+            .publish((soroban_sdk::symbol_short!("TtlBumped"),), ());
     }
 
     // ==================== native swap: staking ====================
@@ -206,11 +339,11 @@ impl OurDao {
         registry::register_name(&env, owner, name)
     }
 
-    pub fn resolve_name(env: Env, name: String) -> Option<Address> {
+    pub fn resolve_name(env: Env, name: String) -> Result<Option<Address>, Error> {
         registry::resolve_name(&env, name)
     }
 
-    pub fn name_of(env: Env, owner: Address) -> Option<String> {
+    pub fn name_of(env: Env, owner: Address) -> Result<Option<String>, Error> {
         registry::name_of(&env, owner)
     }
 
@@ -235,6 +368,23 @@ impl OurDao {
         privacy::reveal_vote(&env, voter, proposal_id, support, salt)
     }
 
+    /// Convenience pre-check: `true` only when the stored commitment matches
+    /// the supplied reveal inputs.
+    pub fn verify_commitment(
+        env: Env,
+        voter: Address,
+        proposal_id: u32,
+        support: bool,
+        salt: BytesN<32>,
+    ) -> bool {
+        privacy::verify_commitment(&env, voter, proposal_id, support, &salt)
+    }
+
+    /// Commit and reveal boundary timestamps for a private treasury proposal.
+    pub fn get_commit_reveal_window(env: Env, proposal_id: u32) -> Result<(u64, u64), Error> {
+        privacy::get_commit_reveal_window(&env, proposal_id)
+    }
+
     // ==================== native swap: content-hash docs ====================
 
     pub fn attach_document(
@@ -247,14 +397,43 @@ impl OurDao {
         docs::attach_document(&env, caller, kind, proposal_id, content_hash)
     }
 
-    pub fn get_document(env: Env, kind: ProposalKind, proposal_id: u32) -> Option<Bytes> {
+    pub fn get_document(
+        env: Env,
+        kind: ProposalKind,
+        proposal_id: u32,
+    ) -> Result<Option<Bytes>, Error> {
         docs::get_document(&env, kind, proposal_id)
     }
 
     // ==================== views ====================
+    //
+    // Rule: a view that reads DAO configuration or the registry returns
+    // `Err(Error::NotInitialized)` on an uninitialized contract. Per-key
+    // lookups (`get_member`, `get_loan`, ...) keep returning `None`; use
+    // `is_initialized` to tell a missing record from a wrong address.
 
     pub fn get_member(env: Env, address: Address) -> Option<Member> {
         storage::get_member(&env, &address)
+    }
+
+    /// Returns `member`'s lifetime loan track record: total loans taken, loans
+    /// fully repaid, and loans currently outstanding. Single O(1) storage read;
+    /// returns `NotMember` if the address has never registered.
+    pub fn get_member_loan_stats(env: Env, member: Address) -> Result<MemberLoanStats, Error> {
+        storage::get_member(&env, &member)
+            .map(|m| MemberLoanStats {
+                total_loans: m.total_loans,
+                repaid_loans: m.repaid_loans,
+                active_loans: m.active_loans,
+            })
+            .ok_or(Error::NotMember)
+    }
+
+    /// Returns everything about `member` in one call: their record, stake,
+    /// unclaimed yield, loan track record, registered name and delegate.
+    /// Returns `NotMember` if the address has never registered.
+    pub fn get_member_overview(env: Env, member: Address) -> Result<MemberOverview, Error> {
+        membership::member_overview(&env, &member)
     }
 
     pub fn get_loan(env: Env, loan_id: u32) -> Option<Loan> {
@@ -283,10 +462,22 @@ impl OurDao {
 
     pub fn get_admins(env: Env) -> Result<Vec<Address>, Error> {
         storage::get_admins(&env)
+        util::require_initialized(&env)?;
+        Ok(storage::get_policy(&env))
     }
 
-    pub fn is_admin(env: Env, address: Address) -> bool {
-        util::is_admin(&env, &address)
+    pub fn get_pending_policy_update(env: Env) -> Option<PendingPolicyUpdate> {
+        admin::get_pending_policy_update(&env)
+    }
+
+    pub fn get_admins(env: Env) -> Result<Vec<Address>, Error> {
+        util::require_initialized(&env)?;
+        Ok(storage::get_admins(&env))
+    }
+
+    pub fn is_admin(env: Env, address: Address) -> Result<bool, Error> {
+        util::require_initialized(&env)?;
+        Ok(util::is_admin(&env, &address))
     }
 
     pub fn is_member(env: Env, address: Address) -> bool {
@@ -296,12 +487,35 @@ impl OurDao {
         )
     }
 
+    /// Reports the first failing eligibility check. Checking again after
+    /// resolving that error can reveal another eligibility failure.
     pub fn is_eligible_for_loan(env: Env, member: Address) -> Result<(), Error> {
         loans::is_eligible_for_loan(&env, &member)
     }
 
-    pub fn get_treasury_balance(env: Env) -> i128 {
-        util::treasury_balance(&env)
+    pub fn get_treasury_balance(env: Env) -> Result<i128, Error> {
+        util::require_initialized(&env)?;
+        Ok(util::treasury_balance(&env))
+    }
+
+    /// Returns the treasury balance held in a specific whitelisted asset.
+    pub fn get_treasury_balance_in_asset(env: Env, asset: Address) -> i128 {
+        util::treasury_balance_in_asset(&env, &asset)
+    }
+
+    /// Reconciliation view for `asset` (#288): the contract's actual token
+    /// balance, how much of it is member stake, and the principal still owed
+    /// on active loans in that asset. `token_balance - staked` equals
+    /// `get_treasury_balance_in_asset`; comparing these figures against the
+    /// indexed event history exposes drift or direct donations. Also answers
+    /// for a removed asset, whose loans may still be outstanding.
+    pub fn get_treasury_accounting(env: Env, asset: Address) -> Result<TreasuryAccounting, Error> {
+        util::require_initialized(&env)?;
+        Ok(TreasuryAccounting {
+            token_balance: util::treasury_balance_for(&env, &asset),
+            staked: util::staked_in_asset(&env, &asset),
+            outstanding_principal: storage::get_outstanding_principal(&env, &asset),
+        })
     }
 
     pub fn get_total_members(env: Env) -> u32 {
@@ -318,20 +532,129 @@ impl OurDao {
 
     pub fn get_token(env: Env) -> Result<Address, Error> {
         storage::get_token(&env)
+        util::require_initialized(&env)?;
+        Ok(storage::get_threshold(&env))
+    }
+
+    pub fn get_token(env: Env) -> Result<Address, Error> {
+        util::require_initialized(&env)?;
+        Ok(storage::get_token(&env))
+    }
+
+    /// Whether `initialize` has run. Clients should check this before relying
+    /// on any other view: every state-reading view returns
+    /// `Error::NotInitialized` on an uninitialized contract rather than
+    /// trapping or returning an ambiguous empty value.
+    pub fn is_initialized(env: Env) -> bool {
+        storage::is_initialized(&env)
+    }
+
+    /// Headline DAO state in one call (#339): membership counts, spendable
+    /// treasury per whitelisted asset, total staked, threshold, pause flag and
+    /// version. Each field matches the individual view it summarises.
+    pub fn get_dao_summary(env: Env) -> DaoSummary {
+        let mut treasury_balances = Vec::new(&env);
+        for asset in storage::get_whitelisted_tokens(&env).iter() {
+            let balance = util::treasury_balance_in_asset(&env, &asset);
+            treasury_balances.push_back(AssetBalance { asset, balance });
+        }
+        DaoSummary {
+            total_members: storage::get_total_members(&env),
+            active_members: storage::get_active_members(&env),
+            treasury_balance: util::treasury_balance(&env),
+            treasury_balances,
+            total_staked: storage::get_total_staked(&env),
+            consensus_threshold: storage::get_threshold(&env),
+            paused: storage::is_paused(&env),
+            version: String::from_str(&env, env!("CARGO_PKG_VERSION")),
+        }
+    }
+
+    // ==================== token whitelist ====================
+
+    /// Proposes adding `token` to the treasury's supported-asset whitelist.
+    /// Requires admin consensus; see `admin::propose_token_addition`.
+    pub fn propose_token_addition(env: Env, caller: Address, token: Address) -> Result<(), Error> {
+        admin::propose_token_addition(&env, caller, token)
+    }
+
+    /// Executes a previously proposed token addition once consensus is met.
+    pub fn execute_token_addition(env: Env, caller: Address, token: Address) -> Result<(), Error> {
+        admin::execute_token_addition(&env, caller, token)
+    }
+
+    /// Removes `token` from the supported-asset whitelist.
+    pub fn remove_token(env: Env, caller: Address, token: Address) -> Result<(), Error> {
+        admin::remove_token(&env, caller, token)
+    }
+
+    /// Returns whether `token` is currently an approved treasury asset.
+    pub fn is_token_whitelisted(env: Env, token: Address) -> bool {
+        storage::is_token_whitelisted(&env, &token)
+    }
+
+    /// Returns the full list of approved treasury assets.
+    pub fn get_whitelisted_tokens(env: Env) -> Vec<Address> {
+        storage::get_whitelisted_tokens(&env)
+    }
+
+    /// Returns the ledger time at which `token`'s pending addition can be
+    /// executed, or `None` if no addition is pending for it.
+    pub fn get_pending_token_addition(env: Env, token: Address) -> Option<u64> {
+        storage::get_pending_token_addition(&env, &token)
+    }
+
+    /// Lists indexed pending asset additions with their earliest execution times.
+    pub fn get_pending_token_additions(env: Env) -> Vec<(Address, u64)> {
+        storage::get_pending_token_additions(&env)
     }
 
     pub fn is_paused(env: Env) -> bool {
         storage::is_paused(&env)
     }
 
+    /// Returns this contract's semver, read from CARGO_PKG_VERSION at build
+    /// time (#197) — lets off-chain tooling / indexers detect which
+    /// contract build a given deployment is running without relying on the
+    /// WASM hash alone.
+    pub fn get_version(env: Env) -> String {
+        String::from_str(&env, env!("CARGO_PKG_VERSION"))
+    }
+
     pub fn get_stake(env: Env, member: Address) -> i128 {
         storage::get_stake(&env, &member)
     }
 
+    /// Returns `member`'s current voting weight (base vote + staking bonus).
+    /// Equivalent to the weight applied when they cast a loan or treasury vote.
+    pub fn get_voting_weight(env: Env, member: Address) -> i128 {
+        util::get_voting_weight(&env, &member)
+    }
+
+    /// Stake tokens required per additional unit of voting bonus.
+    /// Every `stake_weight_unit` tokens staked grants +1 vote, up to the cap.
+    pub fn get_stake_weight_unit(_env: Env) -> i128 {
+        util::get_stake_weight_unit()
+    }
+
+    /// Maximum additional votes a member can earn through staking.
+    pub fn get_max_stake_bonus(_env: Env) -> i128 {
+        util::get_max_stake_bonus()
+    }
+
     pub fn get_pending_yield(env: Env, member: Address) -> i128 {
-        let acc = storage::get_yield_accumulator(&env);
-        let snap = storage::get_yield_snapshot(&env, &member);
-        (acc - snap).max(0)
+        membership::compute_pending_yield(&env, &member)
+    }
+
+    /// Returns `member`'s unclaimed yield denominated in `asset`.
+    pub fn get_pending_yield_in_asset(env: Env, member: Address, asset: Address) -> i128 {
+        membership::compute_pending_yield_in_asset(&env, &member, &asset)
+    }
+
+    /// Returns the address `delegator` has delegated their vote to, or `None`
+    /// if they have never called `delegate_vote`.
+    pub fn get_delegate(env: Env, delegator: Address) -> Option<Address> {
+        storage::get_delegation(&env, &delegator)
     }
 
     /// Returns whether `voter` has cast a (possibly not-yet-revealed) vote
@@ -355,9 +678,116 @@ impl OurDao {
 
     pub fn calculate_loan_terms(env: Env, amount: i128) -> Result<LoanTerms, Error> {
         loans::calculate_loan_terms(&env, amount)
+    /// Quotes the terms a loan of `amount` would carry right now. The quote
+    /// can only be honoured when `amount <= max_loan`: with an empty or
+    /// negative treasury `max_loan` is 0 and the rate shown is the policy
+    /// maximum for a loan that cannot be issued. See
+    /// `loans::calculate_loan_terms`.
+    pub fn calculate_loan_terms(env: Env, amount: i128) -> Result<LoanTerms, Error> {
+        util::require_initialized(&env)?;
+        Ok(loans::calculate_loan_terms(&env, amount))
     }
 
-    pub fn calculate_exit_share(env: Env, member: Address) -> i128 {
-        membership::calculate_exit_share(&env, &member)
+    pub fn calculate_exit_share(env: Env, member: Address) -> Result<i128, Error> {
+        util::require_initialized(&env)?;
+        Ok(membership::calculate_exit_share(&env, &member))
+    }
+
+    // ==================== paginated list views (#334 / #335) ====================
+
+    /// Returns up to `limit` member records starting at offset `start` in the
+    /// internal member-address list. Returns an empty vec when `start` is past
+    /// the end.  Skips addresses whose persistent storage entry has expired.
+    pub fn list_members(env: Env, start: u32, limit: u32) -> Vec<Member> {
+        let all = storage::get_members(&env);
+        let mut out = Vec::new(&env);
+        let len = all.len();
+        let from = start.min(len);
+        let to = (start + limit).min(len);
+        for i in from..to {
+            let addr = all.get(i).unwrap();
+            if let Some(m) = storage::get_member(&env, &addr) {
+                out.push_back(m);
+            }
+        }
+        out
+    }
+
+    /// Returns up to `limit` treasury proposals starting at proposal id `start`.
+    /// Ids are sequential from 0; absent entries (expired from storage) are
+    /// skipped.  Returns an empty vec when `start` is past the last proposal.
+    pub fn list_treasury_proposals(env: Env, start: u32, limit: u32) -> Vec<TreasuryProposal> {
+        let count = storage::get_proposal_count(&env, storage::DataKey::NextTreasuryId);
+        let mut out = Vec::new(&env);
+        let from = start.min(count);
+        let to = (start + limit).min(count);
+        for id in from..to {
+            if let Some(p) = storage::get_treasury_proposal(&env, id) {
+                out.push_back(p);
+            }
+        }
+        out
+    }
+
+    /// Lists up to `limit` loans within the proposal-ID window starting at
+    /// `start`. Missing loans are skipped and do not extend the window.
+    pub fn list_loans(env: Env, start: u32, limit: u32) -> Vec<Loan> {
+        let count = storage::get_proposal_count(&env, storage::DataKey::NextProposalId);
+        let mut loans = Vec::new(&env);
+        for id in start.min(count)..start.saturating_add(limit).min(count) {
+            if let Some(loan) = storage::get_loan(&env, id) {
+                loans.push_back(loan);
+            }
+        }
+        loans
+    }
+
+    // ==================== migration seed entrypoints (#332 / #333) ====================
+
+    /// Seeds member records from a prior deployment. Admin-only; rejected after
+    /// `lock_seeding()` is called. See `docs/MIGRATION.md` for the full procedure.
+    pub fn seed_members(env: Env, caller: Address, members: Vec<Member>) -> Result<(), Error> {
+        migration::seed_members(&env, caller, members)
+    }
+
+    pub fn seed_stakes(
+        env: Env,
+        caller: Address,
+        stakes: Vec<SeedStakeEntry>,
+    ) -> Result<(), Error> {
+        migration::seed_stakes(&env, caller, stakes)
+    }
+
+    pub fn seed_pending_yield(
+        env: Env,
+        caller: Address,
+        yields: Vec<SeedYieldEntry>,
+    ) -> Result<(), Error> {
+        migration::seed_pending_yield(&env, caller, yields)
+    }
+
+    pub fn seed_loans(env: Env, caller: Address, loans: Vec<Loan>) -> Result<(), Error> {
+        migration::seed_loans(&env, caller, loans)
+    }
+
+    pub fn seed_names(env: Env, caller: Address, names: Vec<SeedNameEntry>) -> Result<(), Error> {
+        migration::seed_names(&env, caller, names)
+    }
+
+    pub fn seed_docs(env: Env, caller: Address, docs: Vec<SeedDocEntry>) -> Result<(), Error> {
+        migration::seed_docs(&env, caller, docs)
+    }
+
+    /// Irreversibly closes the seeding window. All `seed_*` entrypoints reject
+    /// calls after this. Admin-only. Returns `SeedingAlreadyLocked` if already
+    /// locked.
+    pub fn lock_seeding(env: Env, caller: Address) -> Result<(), Error> {
+        migration::lock_seeding(&env, caller)
+    }
+
+    /// Returns `true` while the seeding window is open (before `lock_seeding`
+    /// is called).
+    pub fn is_seeding_locked(env: Env) -> bool {
+        storage::is_seeding_locked(&env)
     }
 }

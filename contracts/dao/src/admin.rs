@@ -83,7 +83,7 @@ pub fn initialize(
 
 pub fn add_admin(env: &Env, caller: Address, admin: Address) -> Result<(), Error> {
     util::require_admin(env, &caller)?;
-    let mut admins = storage::get_admins(env);
+    let mut admins = storage::get_admins(env)?;
     if admins.iter().any(|a| a == admin) {
         return Err(Error::AlreadyAdmin);
     }
@@ -96,7 +96,7 @@ pub fn add_admin(env: &Env, caller: Address, admin: Address) -> Result<(), Error
 
 pub fn remove_admin(env: &Env, caller: Address, admin: Address) -> Result<(), Error> {
     util::require_admin(env, &caller)?;
-    let admins = storage::get_admins(env);
+    let admins = storage::get_admins(env)?;
     if admins.len() <= 1 {
         return Err(Error::CannotRemoveLastAdmin);
     }

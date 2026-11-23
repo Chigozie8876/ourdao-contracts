@@ -36,8 +36,8 @@ pub fn propose_withdrawal(
         for_votes: 0,
         against_votes: 0,
         votes_cast: 0,
-        voting_period: storage::get_policy(env).voting_period,
-        treasury_threshold: storage::get_policy(env).treasury_threshold,
+        voting_period: storage::get_policy(env)?.voting_period,
+        treasury_threshold: storage::get_policy(env)?.treasury_threshold,
         private,
     };
     storage::set_treasury_proposal(env, &proposal);
@@ -145,7 +145,7 @@ fn execute(env: &Env, proposal: &mut TreasuryProposal) -> Result<(), Error> {
         return Err(Error::InsufficientTreasury);
     }
     proposal.status = ProposalStatus::Executed;
-    util::token_client(env).transfer(
+    util::token_client(env)?.transfer(
         &util::contract_address(env),
         &proposal.destination,
         &proposal.amount,

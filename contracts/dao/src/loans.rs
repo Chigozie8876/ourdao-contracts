@@ -10,8 +10,8 @@ use crate::util;
 
 /// Quote the terms a loan of `amount` would carry right now. Interest scales
 /// linearly with the loan's size relative to the treasury, clamped to policy.
-pub fn calculate_loan_terms(env: &Env, amount: i128) -> LoanTerms {
-    let policy = storage::get_policy(env);
+pub fn calculate_loan_terms(env: &Env, amount: i128) -> Result<LoanTerms, Error> {
+    let policy = storage::get_policy(env)?;
     let treasury = util::treasury_balance(env);
 
     let loan_ratio = if treasury > 0 {
@@ -25,11 +25,11 @@ pub fn calculate_loan_terms(env: &Env, amount: i128) -> LoanTerms {
         rate = policy.max_interest_rate as i128;
     }
     let total_repayment = amount + (amount * rate / BASIS_POINTS);
-    LoanTerms {
+    Ok(LoanTerms {
         interest_rate: rate as u32,
         total_repayment,
         duration: policy.max_loan_duration,
-    }
+    })
 }
 
 pub fn is_eligible_for_loan(env: &Env, member: &Address) -> Result<(), Error> {
@@ -40,7 +40,7 @@ pub fn is_eligible_for_loan(env: &Env, member: &Address) -> Result<(), Error> {
     if record.has_active_loan {
         return Err(Error::HasActiveLoan);
     }
-    let policy = storage::get_policy(env);
+    let policy = storage::get_policy(env)?;
     let now = env.ledger().timestamp();
     if now.saturating_sub(record.join_ledger) < policy.min_membership_duration {
         return Err(Error::NotEligibleForLoan);
@@ -63,14 +63,14 @@ pub fn request_loan(env: &Env, borrower: Address, amount: i128) -> Result<u32, E
     }
     is_eligible_for_loan(env, &borrower)?;
 
-    let policy = storage::get_policy(env);
+    let policy = storage::get_policy(env)?;
     let treasury = util::treasury_balance(env);
     let max_loan = treasury * policy.max_loan_to_treasury_ratio as i128 / BASIS_POINTS;
     if amount > max_loan {
         return Err(Error::ExceedsTreasuryRatio);
     }
 
-    let terms = calculate_loan_terms(env, amount);
+    let terms = calculate_loan_terms(env, amount)?;
     let now = env.ledger().timestamp();
     let id = storage::next_id(env, storage::DataKey::NextProposalId);
     let proposal = LoanProposal {
@@ -193,7 +193,7 @@ pub fn vote_on_loan_proposal(
 
     let required = util::required_votes(
         storage::get_active_members(env),
-        storage::get_threshold(env),
+        storage::get_threshold(env)?,
     );
     if proposal.for_votes >= required && proposal.status == ProposalStatus::Pending {
         proposal.status = ProposalStatus::ApprovedPendingDisbursement;
@@ -270,7 +270,7 @@ fn approve_and_disburse(env: &Env, proposal: &LoanProposal) -> Result<(), Error>
     borrower.last_loan_time = now;
     storage::set_member(env, &borrower);
 
-    util::token_client(env).transfer(
+    util::token_client(env)?.transfer(
         &util::contract_address(env),
         &proposal.borrower,
         &proposal.amount,
@@ -343,7 +343,7 @@ fn repay_loan_internal(
         return Err(Error::InvalidAmount);
     }
 
-    util::token_client(env).transfer(&borrower, util::contract_address(env), &amount);
+    util::token_client(env)?.transfer(&borrower, &util::contract_address(env), &amount);
 
     // Interest-first split: how much of the loan's total interest was
     // already covered before this payment vs. after it. The difference is
@@ -421,7 +421,7 @@ pub fn mark_loan_defaulted(env: &Env, loan_id: u32) -> Result<(), Error> {
         return Err(Error::LoanNotActive);
     }
 
-    let policy = storage::get_policy(env);
+    let policy = storage::get_policy(env)?;
     let now = env.ledger().timestamp();
     if now < loan.due_time + policy.default_grace_period {
         return Err(Error::LoanNotOverdue);

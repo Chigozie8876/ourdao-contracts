@@ -277,11 +277,11 @@ impl OurDao {
         storage::get_proposal_count(&env, storage::DataKey::NextTreasuryId)
     }
 
-    pub fn get_loan_policy(env: Env) -> LoanPolicy {
+    pub fn get_loan_policy(env: Env) -> Result<LoanPolicy, Error> {
         storage::get_policy(&env)
     }
 
-    pub fn get_admins(env: Env) -> Vec<Address> {
+    pub fn get_admins(env: Env) -> Result<Vec<Address>, Error> {
         storage::get_admins(&env)
     }
 
@@ -312,11 +312,11 @@ impl OurDao {
         storage::get_active_members(&env)
     }
 
-    pub fn get_consensus_threshold(env: Env) -> u32 {
+    pub fn get_consensus_threshold(env: Env) -> Result<u32, Error> {
         storage::get_threshold(&env)
     }
 
-    pub fn get_token(env: Env) -> Address {
+    pub fn get_token(env: Env) -> Result<Address, Error> {
         storage::get_token(&env)
     }
 
@@ -353,7 +353,7 @@ impl OurDao {
         }
     }
 
-    pub fn calculate_loan_terms(env: Env, amount: i128) -> LoanTerms {
+    pub fn calculate_loan_terms(env: Env, amount: i128) -> Result<LoanTerms, Error> {
         loans::calculate_loan_terms(&env, amount)
     }
 

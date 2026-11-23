@@ -17,7 +17,7 @@ pub fn register_member(env: &Env, member: Address) -> Result<(), Error> {
         }
     }
 
-    let fee = storage::get_membership_fee(env);
+    let fee = storage::get_membership_fee(env)?;
 
     let is_returning = storage::get_member(env, &member).is_some();
     let record = Member {
@@ -47,7 +47,7 @@ pub fn register_member(env: &Env, member: Address) -> Result<(), Error> {
 
     // Interaction last (checks-effects-interactions): the fee transfer only
     // happens once every state transition above has completed.
-    util::token_client(env).transfer(&member, &util::contract_address(env), &fee);
+    util::token_client(env)?.transfer(&member, &util::contract_address(env), &fee);
 
     env.events()
         .publish((symbol_short!("joined"),), (member, fee));
@@ -68,7 +68,7 @@ pub fn exit_dao(env: &Env, member: Address) -> Result<(), Error> {
     let payout = share + stake + pending;
 
     if payout > 0 {
-        util::token_client(env).transfer(&util::contract_address(env), &member, &payout);
+        util::token_client(env)?.transfer(&util::contract_address(env), &member, &payout);
     }
     if stake > 0 {
         storage::set_stake(env, &member, 0);
@@ -100,7 +100,7 @@ pub fn claim_rewards(env: &Env, member: Address) -> Result<i128, Error> {
     // Settle: advance snapshot to current accumulator.
     let acc = storage::get_yield_accumulator(env);
     storage::set_yield_snapshot(env, &member, acc);
-    util::token_client(env).transfer(&util::contract_address(env), &member, &pending);
+    util::token_client(env)?.transfer(&util::contract_address(env), &member, &pending);
     env.events()
         .publish((symbol_short!("claimed"),), (member, pending));
     Ok(pending)

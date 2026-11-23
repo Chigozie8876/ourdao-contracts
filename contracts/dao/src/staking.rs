@@ -17,7 +17,7 @@ pub fn stake(env: &Env, member: Address, amount: i128) -> Result<(), Error> {
         return Err(Error::InvalidAmount);
     }
 
-    util::token_client(env).transfer(&member, util::contract_address(env), &amount);
+    util::token_client(env)?.transfer(&member, &util::contract_address(env), &amount);
 
     let new_stake = storage::get_stake(env, &member) + amount;
     storage::set_stake(env, &member, new_stake);
@@ -47,7 +47,7 @@ pub fn unstake(env: &Env, member: Address, amount: i128) -> Result<(), Error> {
     }
 
     let last_stake: u64 = env.storage().persistent().get(&crate::storage::DataKey::StakeTime(member.clone())).unwrap_or(0);
-    let policy = storage::get_policy(env);
+    let policy = storage::get_policy(env)?;
     if env.ledger().timestamp() < last_stake + policy.voting_period {
         return Err(Error::CooldownActive);
     }
@@ -55,7 +55,7 @@ pub fn unstake(env: &Env, member: Address, amount: i128) -> Result<(), Error> {
     let new_stake = current - amount;
     storage::set_stake(env, &member, new_stake);
     storage::set_total_staked(env, storage::get_total_staked(env) - amount);
-    util::token_client(env).transfer(&util::contract_address(env), &member, &amount);
+    util::token_client(env)?.transfer(&util::contract_address(env), &member, &amount);
     storage::extend_instance(env);
 
     env.events()

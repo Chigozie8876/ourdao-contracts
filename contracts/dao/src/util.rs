@@ -9,8 +9,8 @@ pub const STAKE_WEIGHT_UNIT: i128 = 100;
 /// ...up to this cap, so a whale can never fully dominate member consensus.
 pub const MAX_STAKE_BONUS: i128 = 5;
 
-pub fn token_client(env: &Env) -> token::Client<'_> {
-    token::Client::new(env, &storage::get_token(env))
+pub fn token_client(env: &Env) -> Result<token::Client<'_>, crate::error::Error> {
+    Ok(token::Client::new(env, &storage::get_token(env)?))
 }
 
 pub fn contract_address(env: &Env) -> Address {
@@ -20,7 +20,7 @@ pub fn contract_address(env: &Env) -> Address {
 /// Treasury == the DAO's own token balance minus funds earmarked as stake,
 /// so staked principal is never lent out or counted as distributable equity.
 pub fn treasury_balance(env: &Env) -> i128 {
-    let bal = token_client(env).balance(&contract_address(env));
+    let bal = token_client(env).map(|c| c.balance(&contract_address(env))).unwrap_or(0);
     bal - storage::get_total_staked(env)
 }
 
@@ -41,7 +41,7 @@ pub fn require_not_paused(env: &Env) -> Result<(), Error> {
 }
 
 pub fn is_admin(env: &Env, who: &Address) -> bool {
-    storage::get_admins(env).iter().any(|a| &a == who)
+    storage::get_admins(env).map(|a| a.iter().any(|a| &a == who)).unwrap_or(false)
 }
 
 /// Authorizes `caller` and asserts admin membership.

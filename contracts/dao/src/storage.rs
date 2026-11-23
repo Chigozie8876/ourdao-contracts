@@ -1,5 +1,6 @@
 use soroban_sdk::{contracttype, Address, BytesN, Env, String, Vec};
 
+use crate::error::Error;
 use crate::types::{Loan, LoanPolicy, LoanProposal, Member, TreasuryProposal};
 
 // Soroban produces one ledger every ~5 seconds.
@@ -74,43 +75,43 @@ pub fn is_initialized(env: &Env) -> bool {
     env.storage().instance().has(&DataKey::Admins)
 }
 
-pub fn get_admins(env: &Env) -> Vec<Address> {
-    env.storage().instance().get(&DataKey::Admins).unwrap()
+pub fn get_admins(env: &Env) -> Result<Vec<Address>, Error> {
+    env.storage().instance().get(&DataKey::Admins).ok_or(Error::NotInitialized)
 }
 
 pub fn set_admins(env: &Env, admins: &Vec<Address>) {
     env.storage().instance().set(&DataKey::Admins, admins);
 }
 
-pub fn get_threshold(env: &Env) -> u32 {
-    env.storage().instance().get(&DataKey::Threshold).unwrap()
+pub fn get_threshold(env: &Env) -> Result<u32, Error> {
+    env.storage().instance().get(&DataKey::Threshold).ok_or(Error::NotInitialized)
 }
 
 pub fn set_threshold(env: &Env, t: u32) {
     env.storage().instance().set(&DataKey::Threshold, &t);
 }
 
-pub fn get_membership_fee(env: &Env) -> i128 {
+pub fn get_membership_fee(env: &Env) -> Result<i128, Error> {
     env.storage()
         .instance()
         .get(&DataKey::MembershipFee)
-        .unwrap()
+        .ok_or(Error::NotInitialized)
 }
 
 pub fn set_membership_fee(env: &Env, fee: i128) {
     env.storage().instance().set(&DataKey::MembershipFee, &fee);
 }
 
-pub fn get_token(env: &Env) -> Address {
-    env.storage().instance().get(&DataKey::Token).unwrap()
+pub fn get_token(env: &Env) -> Result<Address, Error> {
+    env.storage().instance().get(&DataKey::Token).ok_or(Error::NotInitialized)
 }
 
 pub fn set_token(env: &Env, token: &Address) {
     env.storage().instance().set(&DataKey::Token, token);
 }
 
-pub fn get_policy(env: &Env) -> LoanPolicy {
-    env.storage().instance().get(&DataKey::Policy).unwrap()
+pub fn get_policy(env: &Env) -> Result<LoanPolicy, Error> {
+    env.storage().instance().get(&DataKey::Policy).ok_or(Error::NotInitialized)
 }
 
 pub fn set_policy(env: &Env, policy: &LoanPolicy) {
